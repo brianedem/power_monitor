@@ -159,7 +159,7 @@ def processRequest(cl, request):
         
     elif target == b'/data.json' :
         cl.send('HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
-        cl.send(meter.read_all())
+        cl.send(json.dumps(meter.read_all()))
     else :
         request = request.decode()
         print(request, firstHeaderLine)

@@ -73,9 +73,10 @@ try:
         password = data['password']
         print('file read: ssid={}, password={}'.format(ssid, password))
 except:
-    ssid = 'ArcadiaPalms'
-    password = 'ranchomirage'
-    print("no file found - using defaults")
+    print("Error - no password.json file found")
+    while True :
+        sleep(0.2)
+        toggleLED()
 def connectWifi():
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
@@ -84,12 +85,13 @@ def connectWifi():
         print('Waiting for connection...')
         toggleLED()
         sleep(1)
-    print('WiFi connected')
     led.on()
+    ip_addr = wlan.ifconfig()[0]
+    print(f'WiFi connected - {ip_addr}')
     mac = wlan.config('mac')
     mac = f'{mac[0]:02x}:{mac[1]:02x}:{mac[2]:02x}:{mac[3]:02x}:{mac[4]:02x}:{mac[5]:02x}'
 
-    return (wlan.ifconfig()[0], mac)
+    return (ip_addr, mac)
 
 def open_server(ip):
     address = (ip, 80)
@@ -119,15 +121,29 @@ Current = {6:10.1f} {7}
     </body>
 </html>
 """
+html_error = """<!DOCTYPE html>
+<html>
+    <head> <title>Pico W Power Monitor</title> </head>
+    <body> <h1>Pico W Power Monitor {0}</h1>
+        <pre>
+            Error - Power meter hardware not responding
+        </pre>
+    </body>
+</html>
+"""
+
 meter = powerMeter()
 v=meter.read_all(units=True)
-print(v)
-print(html.format(
-    v['energy'][0],v['energy'][1],
-    v['voltage'][0],v['voltage'][1],
-    v['power'][0],v['power'][1],
-    v['current'][0],v['current'][1],
-    mac_address))
+if v is None :
+    print(html_error.format(mac_address))
+else :
+    print(v)
+    print(html.format(
+        v['energy'][0],v['energy'][1],
+        v['voltage'][0],v['voltage'][1],
+        v['power'][0],v['power'][1],
+        v['current'][0],v['current'][1],
+        mac_address))
 
 errorMessages = {
     400:'Bad Request',
@@ -158,16 +174,23 @@ def processRequest(cl, request):
     if target == b'/' or target == b'/index.html' :
         v = meter.read_all(units=True)
         cl.send('HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
-        cl.send(html.format(
-            v['energy'][0],v['energy'][1],
-            v['voltage'][0],v['voltage'][1],
-            v['power'][0],v['power'][1],
-            v['current'][0],v['current'][1],
-            mac_address))
+        if v is None :
+            cl.send(html_error.format(mac_address))
+        else :
+            cl.send(html.format(
+                v['energy'][0],v['energy'][1],
+                v['voltage'][0],v['voltage'][1],
+                v['power'][0],v['power'][1],
+                v['current'][0],v['current'][1],
+                mac_address))
         
     elif target == b'/data.json' :
         cl.send('HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
-        cl.send(json.dumps(meter.read_all()))
+        v = meter.read_all()
+        if v is None :
+            cl.send(json.dumps({}))
+        else :
+            cl.send(json.dumps(meter.read_all()))
     else :
         request = request.decode()
         print(request, firstHeaderLine)

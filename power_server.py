@@ -1,14 +1,35 @@
 from machine import Pin
-
-led = Pin("LED", Pin.OUT)
-led.on()
-print(led.value())
-def toggleLED() :
-    led.value(not led.value())
-    
 from machine import UART
+from machine import ADC
 import struct
 import time
+
+led = Pin("LED", Pin.OUT)
+def toggleLED() :
+    led.value(not led.value())
+
+from micropython import const
+PADS_GPIO26 = const(0x4001c06c)
+from machine import mem32
+mem32[PADS_GPIO26] = mem32[PADS_GPIO26] & 0xfffffff3
+
+ntc_temp = ADC(0)
+from math import log
+
+def readTemperature(channel) :
+    reading = channel.read_u16()
+    maxReading = 0xFFFF
+    RoverR0 = 1.0/(float(maxReading) / float(reading) - 1.0)
+
+    zeroC = 273.15			# 0 degrees C in Kelvin
+    T0 = zeroC + 25.0       # reference point temperature
+    beta = 3984
+
+    K = 1.0 / (1.0/T0 + log(RoverR0)/beta)
+    C = K - zeroC
+    F = 1.8*C + 32
+    return C
+
 
 def crc16(data) :
     crc = 0xFFFF
@@ -66,12 +87,17 @@ from time import sleep
 import socket
 
 import ujson as json
+hostname = None
 try:
     with open('passwords.json', 'r') as f:
         data = json.load(f)
         ssid = data['ssid']
         password = data['password']
-        print('file read: ssid={}, password={}'.format(ssid, password))
+        if 'hostname' in data :
+            hostname = data['hostname']
+        else :
+            hostname = ''
+        print('file read: ssid={}, password={}, hostname={}'.format(ssid, password, hostname))
 except:
     print("Error - no password.json file found")
     while True :
@@ -87,17 +113,18 @@ def connectWifi():
         sleep(1)
     led.on()
     ip_addr = wlan.ifconfig()[0]
-    print(f'WiFi connected - {ip_addr}')
+    print(f'WiFi connected')
+    print(f'IP address {ip_addr}')
+    print(f'Monitoring {hostname}')
     mac = wlan.config('mac')
-    mac = f'{mac[0]:02x}:{mac[1]:02x}:{mac[2]:02x}:{mac[3]:02x}:{mac[4]:02x}:{mac[5]:02x}'
-
-    return (ip_addr, mac)
+    ma = f'{mac[0]:02x}:{mac[1]:02x}:{mac[2]:02x}:{mac[3]:02x}:{mac[4]:02x}:{mac[5]:02x}'
+    return (ip_addr, ma)
 
 def open_server(ip):
     address = (ip, 80)
     s = socket.socket()
     s.bind(address)
-    s.listen(1)
+    s.listen(5)
     return s
 
 try:
@@ -111,12 +138,13 @@ print(mac_address)
 html = """<!DOCTYPE html>
 <html>
     <head> <title>Pico W Power Monitor</title> </head>
-    <body> <h1>Pico W Power Monitor {8}</h1>
+    <body> <h1>Pico W Power Monitor {9} {8}</h1>
         <pre>
 Energy  = {0:10.1f} {1}
 Voltage = {2:10.1f} {3}
 Power   = {4:10.1f} {5}
 Current = {6:10.1f} {7}
+Temp    = {10:10.1f} C
         </pre>
     </body>
 </html>
@@ -124,7 +152,7 @@ Current = {6:10.1f} {7}
 html_error = """<!DOCTYPE html>
 <html>
     <head> <title>Pico W Power Monitor</title> </head>
-    <body> <h1>Pico W Power Monitor {0}</h1>
+    <body> <h1>Pico W Power Monitor {1} {0}</h1>
         <pre>
             Error - Power meter hardware not responding
         </pre>
@@ -134,8 +162,10 @@ html_error = """<!DOCTYPE html>
 
 meter = powerMeter()
 v=meter.read_all(units=True)
+tempC = readTemperature(ntc_temp)
+
 if v is None :
-    print(html_error.format(mac_address))
+    print(html_error.format(mac_address, hostname))
 else :
     print(v)
     print(html.format(
@@ -143,7 +173,7 @@ else :
         v['voltage'][0],v['voltage'][1],
         v['power'][0],v['power'][1],
         v['current'][0],v['current'][1],
-        mac_address))
+        mac_address, hostname, tempC))
 
 errorMessages = {
     400:'Bad Request',
@@ -157,6 +187,7 @@ def respondError(cl, code, explain=None):
                 f'<body><center><h1>{explain}</h1></center></body></html>\r\n')
     return
 def processRequest(cl, request):
+    print(request)
     try :
         header, body = request.split(b'\r\n\r\n', 1)
     except ValueError :
@@ -173,24 +204,30 @@ def processRequest(cl, request):
         return
     if target == b'/' or target == b'/index.html' :
         v = meter.read_all(units=True)
+        tempC = readTemperature(ntc_temp)
+
         cl.send('HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
         if v is None :
-            cl.send(html_error.format(mac_address))
+            cl.send(html_error.format(mac_address, hostname))
         else :
             cl.send(html.format(
                 v['energy'][0],v['energy'][1],
                 v['voltage'][0],v['voltage'][1],
                 v['power'][0],v['power'][1],
                 v['current'][0],v['current'][1],
-                mac_address))
+                mac_address, hostname, tempC))
         
     elif target == b'/data.json' :
         cl.send('HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
         v = meter.read_all()
+        tempC = readTemperature(ntc_temp)
         if v is None :
             cl.send(json.dumps({}))
         else :
-            cl.send(json.dumps(meter.read_all()))
+            if hostname :
+                v['hostname'] = hostname
+            v['temperature'] = tempC
+            cl.send(json.dumps(v))
     else :
         request = request.decode()
         print(request, firstHeaderLine)
@@ -203,7 +240,7 @@ while True:
         print(f'Connection accept() error: {e}')
         continue
     print('client connected from', addr)
-    cl.settimeout(1)	# LG WebTV opens connection without sending request
+    cl.settimeout(5)	# LG WebTV opens connection without sending request
     try :
         request = cl.recv(1024)
     except OSError as e:

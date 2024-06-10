@@ -1,34 +1,45 @@
+# This file is to be writen to the Raspberry Pi Pico W as main.py
 from machine import Pin
 from machine import UART
 from machine import ADC
 import struct
 import time
 
+# set up the LED and define routine to toggle
 led = Pin("LED", Pin.OUT)
 def toggleLED() :
     led.value(not led.value())
 
+# disable the default pull-down on IO pad used for ADC0
 from micropython import const
 PADS_GPIO26 = const(0x4001c06c)
 from machine import mem32
 mem32[PADS_GPIO26] = mem32[PADS_GPIO26] & 0xfffffff3
 
+# set up ADC channel 0 to monitor temperature
+# The NTC temperature sensor forms part of a resistive divider
+# feeding ADC channel 0. NTC is lower resistor of the divider,
+# while a fixed resistor matching the NTC Ro, connected to
+# the ADC reference is used for the upper resistor
 ntc_temp = ADC(0)
-from math import log
+ntc_beta = 3984             # from the NTC datasheet
 
+# routine to convert ADC reading to temperature
+# using simplified Steinhart-Hart equation
+from math import log
 def readTemperature(channel) :
+        # calculate the resistor ratio from the ADC reading
     reading = channel.read_u16()
     maxReading = 0xFFFF
     RoverR0 = 1.0/(float(maxReading) / float(reading) - 1.0)
 
-    zeroC = 273.15			# 0 degrees C in Kelvin
+    zeroC = 273.15          # 0 degrees C in Kelvin
     T0 = zeroC + 25.0       # reference point temperature
-    beta = 3984
 
-    K = 1.0 / (1.0/T0 + log(RoverR0)/beta)
-    C = K - zeroC
-    F = 1.8*C + 32
-    return C
+    temp_K = 1.0 / (1.0/T0 + log(RoverR0)/ntc_beta)
+    temp_C = temp_K - zeroC
+    F = 1.8*temp_C + 32
+    return temp_C
 
 
 def crc16(data) :
@@ -135,16 +146,20 @@ except KeyboardInterrupt:
 
 print(mac_address)
 
-html = """<!DOCTYPE html>
-<html>
-    <head> <title>Pico W Power Monitor</title> </head>
-    <body> <h1>Pico W Power Monitor {9} {8}</h1>
-        <pre>
+m_format = """
 Energy  = {0:10.1f} {1}
 Voltage = {2:10.1f} {3}
 Power   = {4:10.1f} {5}
 Current = {6:10.1f} {7}
 Temp    = {10:10.1f} C
+"""
+html = """<!DOCTYPE html>
+<html>
+    <head> <title>Pico W Power Monitor</title> </head>
+    <body> <h1>Pico W {9} Power Monitor</h1>
+        <pre style="font-size:4vw;">
+MAC Address: {8}
+""" + m_format + """
         </pre>
     </body>
 </html>
@@ -153,9 +168,9 @@ html_error = """<!DOCTYPE html>
 <html>
     <head> <title>Pico W Power Monitor</title> </head>
     <body> <h1>Pico W Power Monitor {1} {0}</h1>
-        <pre>
+        <p style="font-size:4vw;">
             Error - Power meter hardware not responding
-        </pre>
+        </p>
     </body>
 </html>
 """
@@ -168,7 +183,7 @@ if v is None :
     print(html_error.format(mac_address, hostname))
 else :
     print(v)
-    print(html.format(
+    print(m_format.format(
         v['energy'][0],v['energy'][1],
         v['voltage'][0],v['voltage'][1],
         v['power'][0],v['power'][1],
@@ -240,7 +255,7 @@ while True:
         print(f'Connection accept() error: {e}')
         continue
     print('client connected from', addr)
-    cl.settimeout(5)	# LG WebTV opens connection without sending request
+    cl.settimeout(5)    # LG WebTV opens connection without sending request
     try :
         request = cl.recv(1024)
     except OSError as e:

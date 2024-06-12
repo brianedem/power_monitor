@@ -57,7 +57,7 @@ registers = {
         0: (1, 0.1,     'voltage', 'V'),
         1: (2, 0.001,   'current', 'A'),
         3: (2, 0.1,     'power',   'W'),
-        5: (2, 1.0,     'energy', 'Wh'),
+        5: (2, 0.001,   'energy', 'kWh'),
         7: (1, 0.1,     'frequency', 'Hz'),
         8: (1, 0.01,    'powerFactor', ''),
         9: (1, 1,       'powerAlarm', ''),
@@ -83,7 +83,7 @@ class powerMeter:
                     reg = registers[i]
                     value = 0
                     for s in range(reg[0]) :
-                        value |= values[i+s] << s
+                        value |= values[i+s] << (s*16)
                     if units :
                         meter_values[reg[2]] = (value*reg[1], reg[3])
                     else :

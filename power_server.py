@@ -10,6 +10,10 @@ led = Pin("LED", Pin.OUT)
 def toggleLED() :
     led.value(not led.value())
 
+# read VBUS via ADC3 to determine if USB is connected
+vbus_voltage = ADC(3).read_u16()
+print(f'VBUS = {vbus_voltage}')
+
 # disable the default pull-down on IO pad used for ADC0
 from micropython import const
 PADS_GPIO26 = const(0x4001c06c)
@@ -114,6 +118,7 @@ except:
     while True :
         sleep(0.2)
         toggleLED()
+
 def connectWifi():
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
@@ -123,6 +128,7 @@ def connectWifi():
         toggleLED()
         sleep(1)
     led.on()
+    print('wifi rssi: ', wlan.status('rssi'))
     ip_addr = wlan.ifconfig()[0]
     print(f'WiFi connected')
     print(f'IP address {ip_addr}')
@@ -248,11 +254,30 @@ def processRequest(cl, request):
         print(request, firstHeaderLine)
         respondError(cl,404, 'File not found')
 
+    # activate bluetooth interface
+import bluetooth
+from ble_uart_peripheral import BLEUART
+
+ble = bluetooth.BLE()
+uart = BLEUART(ble, name=hostname)
+
+def on_rx():
+    command = uart.read().decode().strip()
+    print("rx: ", command)
+    if 'status' in command :
+        uart.write(f'request_count = {request_count}\n')
+    else :
+        uart.write(f'unimplemented command {command}\n')
+
+uart.irq(handler=on_rx)
+
+request_count = 0
 while True:
     try :
         cl, addr = server.accept()
     except OSError as e:
         print(f'Connection accept() error: {e}')
+        request_count += 1
         continue
     print('client connected from', addr)
     cl.settimeout(5)    # LG WebTV opens connection without sending request
@@ -264,3 +289,4 @@ while True:
         processRequest(cl, request)
     finally :
         cl.close()
+    request_count += 1

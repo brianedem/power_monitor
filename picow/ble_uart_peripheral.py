@@ -49,13 +49,11 @@ class BLEUART:
         # Optionally add services=[_UART_UUID], but this is likely to make the payload too large.
         self._payload = advertising_payload(name=name, appearance=_ADV_APPEARANCE_GENERIC_COMPUTER)
         self._advertise()
-        print("BLEUART.__init__ has finshed calling advertise()")
 
     def irq(self, handler):
         self._handler = handler
 
     def _irq(self, event, data):
-        print("_irq event: ", event, data)
         # Track connections so we can send notifications.
         if event == _IRQ_CENTRAL_CONNECT:
             conn_handle, _, _ = data

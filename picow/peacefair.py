@@ -1,4 +1,6 @@
-
+from machine import UART
+from machine import Pin
+import struct
 
 def crc16(data) :
     crc = 0xFFFF

@@ -36,7 +36,8 @@ _ADV_APPEARANCE_GENERIC_COMPUTER = const(128)
 
 
 class BLEUART:
-    def __init__(self, ble, name="mpy-uart", rxbuf=100):
+    def __init__(self, name="mpy-uart", rxbuf=100):
+        ble = bluetooth.BLE()
         self._ble = ble
         self._ble.active(True)
         self._ble.irq(self._irq)
@@ -55,6 +56,7 @@ class BLEUART:
 
     def _irq(self, event, data):
         # Track connections so we can send notifications.
+        print(f'ble event {event}')
         if event == _IRQ_CENTRAL_CONNECT:
             conn_handle, _, _ = data
             self._connections.add(conn_handle)

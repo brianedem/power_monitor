@@ -1,16 +1,14 @@
 from machine import ADC
+from machine import mem32
+from machine import Pin
 
 _messages = []
 
 # determine if the USB is connected or able to accept additional output data
 # Method 1 - look for power on USB interface
-    # ADC(3) monitors VBUS (USB power) scaled by 50%
-    # For VBUS=5V, ADC should report ((5*0.50)/3.3)*0x10000=0xC1F0
-    # disable the default pull-down on IO pad used for ADC3
-#PADS_GPIO26 = const(0x4001c06c)
-PADS_GPIO29 = const(0x4001c078)
-mem32[PADS_GPIO29] &= 0xfffffff3
-_usb_connected = ADC(3).read_u16() > 0x8000 # threshold about 2/3 of expected value
+    # WL_GPIO2 monitors VBUS (USB power)
+_VBUS = Pin('WL_GPIO2', Pin.IN)
+_usb_connected = _VBUS.value()
 
 # Method 2 - use uselect.poll() on the output stream?
 
@@ -23,6 +21,9 @@ if (machine.mem32[SIE_STATUS] & (CONNECTED | SUSPENDED))==CONNECTED:
   print('....,')
 '''
 
+# micropython does provide a logging library that probably could be used
+# in place of this by writing a stream handler that provides the added
+# functionaly and replacing the default handler by calling logging.basicConfig(stream=<new_handler>)
 _console = _usb_connected
 
 CRITICAL = 50
@@ -57,43 +58,44 @@ def _checkLevel(level):
         rv = _nameToLevel[level]
     return rv
 
-class getLogger(self, name, level=NOTSET) :
-    def __init__ :
+class getLogger() :
+    def __init__(self, name, level=NOTSET) :
         self.name = name
         self.level = level
 
-    def basicConfig(level=INFO):
+    def basicConfig(self, level=INFO):
         self.level = _checkLevel(level)
 
     def clear(self):
-        messages.clear()
+        _messages.clear()
 
     def show(self):
-        m = ''
-        for l in messages:
-            m += l
-        return m
+#       m = ''
+#       for l in _messages:
+#           m += l
+#       return m
+        return _messages
 
     def log(self, level, message):
         if level >= self.level :
-        m = f'{_levelToName[self.level]}:{self.name}:{message}'
-        if _console:
-            print(m)
-        messages.append(m)
-        if count(messages) > 20:
-            messages.pop(0)
+            m = f'{_levelToName[level]}:{self.name}:{message}'
+            if _console:
+                print(m)
+            _messages.append(m)
+            if len(_messages) > 20:
+                _messages.pop(0)
 
     def critical(self,message):
-        log(CRITICAL, message)
+        self.log(CRITICAL, message)
 
     def error(self,message):
-        log(ERROR, message)
+        self.log(ERROR, message)
 
     def warning(self,message):
-        log(WARNING, message)
+        self.log(WARNING, message)
 
     def info(self,message):
-        log(INFO, message)
+        self.log(INFO, message)
 
     def debug(self,message):
-        log(DEBUG, message)
+        self.log(DEBUG, message)

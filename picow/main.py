@@ -1,20 +1,18 @@
 # This file is to be writen to the Raspberry Pi Pico W as main.py
 from machine import Pin
-from machine import UART
 from machine import ADC
 import mlogging as logging
 import ntc_temp
 import peacefair
-import struct
 import time
 
 # set up the LED and define routine to toggle
-led = Pin("LED", Pin.OUT)
+led = Pin('LED', Pin.OUT)
 def toggleLED() :
     led.value(not led.value())
 
 log = logging.getLogger('main')
-log.basicConfig(level=DEBUG)
+log.basicConfig(logging.DEBUG)
 
 outside_thermometer = ntc_temp.thermometer()
 
@@ -36,12 +34,13 @@ try:
             hostname = ''
         log.debug('file read: ssid={}, password={}, hostname={}'.format(ssid, password, hostname))
 except:
-    log.error("Error - no password.json file found")
+    log.error('Error - no password.json file found')
     while True :
         sleep(0.2)
         toggleLED()
 
 def connectWifi():
+    network.hostname(hostname)
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
     wlan.connect(ssid, password)
@@ -50,7 +49,7 @@ def connectWifi():
         toggleLED()
         sleep(1)
     led.on()
-    log.debug('wifi rssi: ', wlan.status('rssi'))
+    log.debug(f"wifi rssi: {wlan.status('rssi')}")
     ip_addr = wlan.ifconfig()[0]
     log.debug(f'WiFi connected')
     log.debug(f'IP address {ip_addr}')
@@ -72,7 +71,7 @@ try:
 except KeyboardInterrupt:
     machine.reset()
 
-log.INFO(mac_address)
+log.info(f'{mac_address}')
 
 m_format = """
 Energy  = {0:10.1f} {1}
@@ -108,9 +107,8 @@ v=power_meter.read_all(units=True)
 tempC = outside_thermometer.readTemperature()
 
 if v is None :
-    log.error(html_error.format(mac_address, hostname))
+    log.error('Power meter hardware not responding')
 else :
-    log.debug(v)
     log.debug(m_format.format(
         v['energy'][0],v['energy'][1],
         v['voltage'][0],v['voltage'][1],
@@ -173,19 +171,24 @@ def processRequest(cl, request):
             cl.send(json.dumps(v))
     else :
         request = request.decode()
-        log.error(request, firstHeaderLine)
+        log.error(f'{request} {firstHeaderLine}')
         respondError(cl,404, 'File not found')
 
     # activate bluetooth interface
-import bluetooth
 from ble_uart_peripheral import BLEUART
 
-ble = bluetooth.BLE()
-uart = BLEUART(ble, name=hostname)
-
+uart = BLEUART(name=hostname)
+# possible commands:
+#  show ap                      - shows available wifi access points
+#  set ap <ssid> <password>     - stores ssid and password in file; connects to ap
+#  show hostname
+#  set hostname <name>
+#  show log                     - dumps last 20 log entries
+#  set loglevel <level>         - sets the logging level
+#  
 def on_rx():
     command = uart.read().decode().strip()
-    log.debug("rx: ", command)
+    log.debug(f'bluetooth rx: {command}')
     if 'status' in command :
         uart.write(f'request_count = {request_count}\n')
     elif 'log' in command :
@@ -205,7 +208,7 @@ while True:
         log.error(f'Connection accept() error: {e}')
         request_count += 1
         continue
-    log.debug('client connected from', addr)
+    log.debug(f'client connected from {addr}')
     cl.settimeout(5)    # LG WebTV opens connection without sending request
     try :
         request = cl.recv(1024)

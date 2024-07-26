@@ -1,30 +1,38 @@
 # This file is to be writen to the Raspberry Pi Pico W as main.py
 from machine import Pin
-from machine import ADC
 import mlogging as logging
 import ntc_temp
+from ble_uart_peripheral import BLEUART
+import ujson as json
+from time import sleep
+
+import network
+import socket
+import select
 import peacefair
-import time
 
 # set up the LED and define routine to toggle
 led = Pin('LED', Pin.OUT)
 def toggleLED() :
     led.value(not led.value())
 
+# set up logging
 log = logging.getLogger('main')
 log.basicConfig(logging.DEBUG)
 
-outside_thermometer = ntc_temp.thermometer()
+    # temperature monitoring
+# to reduce sampling noise make continous measurements over time
+# if all async events can not be polled consider running
+# this in _thread.start_new_thread()
+thermometer = ntc_temp.thermometer()
 
-           
-import network
-from time import sleep
-import socket
-
-import ujson as json
+# read configuration data from configuration file
+config_file = 'passwords.json'
 hostname = None
+ssid = None
+password = None
 try:
-    with open('passwords.json', 'r') as f:
+    with open(config_file, 'r') as f:
         data = json.load(f)
         ssid = data['ssid']
         password = data['password']
@@ -32,31 +40,59 @@ try:
             hostname = data['hostname']
         else :
             hostname = ''
-        log.debug('file read: ssid={}, password={}, hostname={}'.format(ssid, password, hostname))
-except:
-    log.error('Error - no password.json file found')
+        log.debug(f'file read: ssid={ssid}, password={password}, hostname={hostname}')
+except OSError:
+    log.error(f'No {config_file} file found')
     while True :
         sleep(0.2)
         toggleLED()
+except ValueError:
+    log.error('{config_file} does not have a valid json format')
+except KeyError as key:
+    log.error('No {key} found in file')
 
-def connectWifi():
-    network.hostname(hostname)
-    wlan = network.WLAN(network.STA_IF)
-    wlan.active(True)
-    wlan.connect(ssid, password)
-    while wlan.isconnected() == False:
-        log.debug('Waiting for connection...')
-        toggleLED()
-        sleep(1)
-    led.on()
-    log.debug(f"wifi rssi: {wlan.status('rssi')}")
-    ip_addr = wlan.ifconfig()[0]
-    log.debug(f'WiFi connected')
-    log.debug(f'IP address {ip_addr}')
-    log.debug(f'Monitoring {hostname}')
-    mac = wlan.config('mac')
-    ma = f'{mac[0]:02x}:{mac[1]:02x}:{mac[2]:02x}:{mac[3]:02x}:{mac[4]:02x}:{mac[5]:02x}'
-    return (ip_addr, ma)
+
+    # activate bluetooth interface
+buart = BLEUART(name=hostname)
+# possible commands:
+#  show ap                      - shows available wifi access points
+#  set ap <ssid> <password>     - stores ssid and password in file; connects to ap
+#  show hostname
+#  set hostname <name>
+#  show log                     - dumps last 20 log entries
+#  set loglevel <level>         - sets the logging level
+#  
+def on_rx():
+    command = buart.read().decode().strip()
+    log.debug(f'bluetooth rx: {command}')
+    if 'status' in command :
+        buart.write(f'request_count = {request_count}\n')
+    elif 'log' in command :
+        buart.write(f'Log:\n')
+        for m in log.show() :
+            buart.write(f' {m}\n')
+    else :
+        buart.write(f'unimplemented command {command}\n')
+
+buart.irq(handler=on_rx)
+
+    # connect to the wifi
+network.hostname(hostname)
+wlan = network.WLAN(network.STA_IF)
+wlan.active(True)
+wlan.connect(ssid, password)
+while wlan.isconnected() == False:
+    log.debug('Waiting for connection...')
+    toggleLED()
+    sleep(1)
+led.on()
+log.debug(f"wifi rssi: {wlan.status('rssi')}")
+network_ip = wlan.ifconfig()[0]
+log.debug(f'WiFi connected')
+log.debug(f'IP address {network_ip}')
+log.debug(f'Monitoring {hostname}')
+mac = wlan.config('mac')
+mac_address = f'{mac[0]:02x}:{mac[1]:02x}:{mac[2]:02x}:{mac[3]:02x}:{mac[4]:02x}:{mac[5]:02x}'
 
 def open_server(ip):
     address = (ip, 80)
@@ -66,7 +102,6 @@ def open_server(ip):
     return s
 
 try:
-    network_ip, mac_address = connectWifi()
     server = open_server(network_ip)
 except KeyboardInterrupt:
     machine.reset()
@@ -104,7 +139,7 @@ html_error = """<!DOCTYPE html>
 
 power_meter = peacefair.powerMeter()
 v=power_meter.read_all(units=True)
-tempC = outside_thermometer.readTemperature()
+tempC = thermometer.readTemperature()
 
 if v is None :
     log.error('Power meter hardware not responding')
@@ -145,7 +180,7 @@ def processRequest(cl, request):
         return
     if target == b'/' or target == b'/index.html' :
         v = power_meter.read_all(units=True)
-        tempC = outside_thermometer.readTemperature()
+        tempC = thermometer.readTemperature()
 
         cl.send('HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
         if v is None :
@@ -161,7 +196,7 @@ def processRequest(cl, request):
     elif target == b'/data.json' :
         cl.send('HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
         v = power_meter.read_all()
-        tempC = outside_thermometer.readTemperature()
+        tempC = thermometer.readTemperature()
         if v is None :
             cl.send(json.dumps({}))
         else :
@@ -174,40 +209,121 @@ def processRequest(cl, request):
         log.error(f'{request} {firstHeaderLine}')
         respondError(cl,404, 'File not found')
 
-    # activate bluetooth interface
-from ble_uart_peripheral import BLEUART
+# set up socket polling to service both USB console and web server
+import select
+import sys
+poller = select.poll()
+#server.settimeout(1)
+server.setblocking(False)
+poller.register(server, select.POLLIN)
+poller.register(sys.stdin, select.POLLIN)
 
-uart = BLEUART(name=hostname)
-# possible commands:
-#  show ap                      - shows available wifi access points
-#  set ap <ssid> <password>     - stores ssid and password in file; connects to ap
-#  show hostname
-#  set hostname <name>
-#  show log                     - dumps last 20 log entries
-#  set loglevel <level>         - sets the logging level
-#  
-def on_rx():
-    command = uart.read().decode().strip()
-    log.debug(f'bluetooth rx: {command}')
-    if 'status' in command :
-        uart.write(f'request_count = {request_count}\n')
-    elif 'log' in command :
-        uart.write(f'Log:\n')
-        for m in log.show() :
-            uart.write(f' {m}\n')
-    else :
-        uart.write(f'unimplemented command {command}\n')
-
-uart.irq(handler=on_rx)
+import errno
 
 request_count = 0
+loops = 0
+
+# The console IO is not buffered so polling is triggered on the first charactor
+# Implement a line buffer to collect keystrokes and handle backspace/delete
+console_command = ''
+csi_state = None
+vt_key_code = ''
+ESC = '\033'
+ESC_MESSAGE = '<ESC>'
+
+def process_console(key_value) :
+    global csi_state
+    global console_command
+    if csi_state is not None :
+        if csi_state == '': # == ESC      # have seen ESC, process second charactor
+            if key_value == '[':            # expected value; consume for now
+                csi_state = '['
+                return
+            else :                          # unexpected value, process normally
+                pass
+
+        elif csi_state[0] == '[':           # collecting CSI printable charactors
+            if key_value.isdigit() :        #  all decimal digits after bracket
+                csi_state += key_value
+                return
+            elif key_value == '~':          #  terminator of the digits (and CSI sequence)
+                if csi_state == '[3':       #     VT-100 delete key
+                    key_value = '\b'        #         remap to backspace code
+                    csi_state = None
+                else :
+                    pass
+            else :                          # unexpected value
+                pass
+
+        # if csi_state has a value at this point CSI processing was aborted
+        if csi_state is not None:
+            text = ESC_MESSAGE + csi_state
+            console_command += text
+            sys.stdout.write(text)
+            csi_state = None
+
+    if key_value == ESC:
+        csi_state = ''  # indicates that ESC has been received
+        return
+
+        # process the command here? Maybe return the command?
+    if key_value == '\n':
+        print(f'\nCommand: {console_command}')
+        console_command = ''
+        return
+
+    if key_value==chr(127) or key_value=='\b':
+        if len(console_command) > 0 :
+            console_command = console_command[:-1]
+            sys.stdout.write('\b \b')
+        return
+
+        # no special processing - just collect and echo
+    console_command += key_value
+    sys.stdout.write(key_value)
+
+while True:
+# make a temperature measurement
+
+        # check and service console and/or web server
+    events = poller.poll(100)   # 100ms polling; timeout generates empty list
+    loops += 1
+    for fd, flag in events:
+        if fd == sys.stdin :
+#           print(f'{loops} loops')
+            value = sys.stdin.read(1)
+#           print(f'Got: {ord(value)}')
+            process_console(value)
+
+        elif fd == server :
+            request_count += 1
+            try :
+                cl, addr = server.accept()
+            except OSError as e:
+                if e.errno != errno.ETIMEDOUT:
+                    log.error(f'Connection accept() error: {e}')
+                continue
+
+            log.debug(f'client connected from {addr}')
+            cl.settimeout(5)    # LG WebTV opens connection without sending request
+            try :
+                request = cl.recv(1024)
+            except OSError as e:
+                log.error(f'Connection timeout - closing; {e}')
+            else :
+                processRequest(cl, request)
+            finally :
+                cl.close()
+
 while True:
     try :
         cl, addr = server.accept()
     except OSError as e:
-        log.error(f'Connection accept() error: {e}')
-        request_count += 1
+        if e.errno != errno.ETIMEDOUT:
+            log.error(f'Connection accept() error: {e}')
+            request_count += 1
         continue
+
     log.debug(f'client connected from {addr}')
     cl.settimeout(5)    # LG WebTV opens connection without sending request
     try :

@@ -56,7 +56,7 @@ class BLEUART:
 
     def _irq(self, event, data):
         # Track connections so we can send notifications.
-        print(f'ble event {event}')
+#       print(f'ble event {event}')
         if event == _IRQ_CENTRAL_CONNECT:
             conn_handle, _, _ = data
             self._connections.add(conn_handle)

@@ -10,6 +10,7 @@ import network
 import socket
 import select
 import peacefair
+import line_edit
 
 # set up the LED and define routine to toggle
 led = Pin('LED', Pin.OUT)
@@ -65,14 +66,9 @@ buart = BLEUART(name=hostname)
 def on_rx():
     command = buart.read().decode().strip()
     log.debug(f'bluetooth rx: {command}')
-    if 'status' in command :
-        buart.write(f'request_count = {request_count}\n')
-    elif 'log' in command :
-        buart.write(f'Log:\n')
-        for m in log.show() :
-            buart.write(f' {m}\n')
-    else :
-        buart.write(f'unimplemented command {command}\n')
+    result = process_command(command)
+    for line in result:
+        buart.write(line+'\n')
 
 buart.irq(handler=on_rx)
 
@@ -129,10 +125,12 @@ MAC Address: {8}
 html_error = """<!DOCTYPE html>
 <html>
     <head> <title>Pico W Power Monitor</title> </head>
-    <body> <h1>Pico W Power Monitor {1} {0}</h1>
-        <p style="font-size:4vw;">
-            Error - Power meter hardware not responding
-        </p>
+    <body> <h1>Pico W {1} Power Monitor</h1>
+        <pre style="font-size:3vw;">
+MAC Address: {0}
+Error - Power meter hardware not responding
+Temp    = {2:10.1f} C
+        </pre>
     </body>
 </html>
 """
@@ -184,7 +182,8 @@ def processRequest(cl, request):
 
         cl.send('HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
         if v is None :
-            cl.send(html_error.format(mac_address, hostname))
+            cl.send(html_error.format(
+                mac_address, hostname, tempC))
         else :
             cl.send(html.format(
                 v['energy'][0],v['energy'][1],
@@ -224,66 +223,25 @@ request_count = 0
 loops = 0
 
 # The console IO is not buffered so polling is triggered on the first charactor
-# Implement a line buffer to collect keystrokes and handle backspace/delete
-console_command = ''
-csi_state = None
-vt_key_code = ''
-ESC = '\033'
-ESC_MESSAGE = '<ESC>'
+def process_command(command):
+    result = []
+    if   'status' in command :
+        result.append(f'request_count = {request_count}')
+    elif 'log' in command :
+        result.append(f'Log:')
+        for m in log.show() :
+            result.append( f' {m}')
+    elif 'temp' in command:
+        result.append(f'Temperature = {thermometer.readTemperature()}, loops = {loops}')
+    else :
+        result.append(f'unimplemented command {command}')
 
-def process_console(key_value) :
-    global csi_state
-    global console_command
-    if csi_state is not None :
-        if csi_state == '': # == ESC      # have seen ESC, process second charactor
-            if key_value == '[':            # expected value; consume for now
-                csi_state = '['
-                return
-            else :                          # unexpected value, process normally
-                pass
-
-        elif csi_state[0] == '[':           # collecting CSI printable charactors
-            if key_value.isdigit() :        #  all decimal digits after bracket
-                csi_state += key_value
-                return
-            elif key_value == '~':          #  terminator of the digits (and CSI sequence)
-                if csi_state == '[3':       #     VT-100 delete key
-                    key_value = '\b'        #         remap to backspace code
-                    csi_state = None
-                else :
-                    pass
-            else :                          # unexpected value
-                pass
-
-        # if csi_state has a value at this point CSI processing was aborted
-        if csi_state is not None:
-            text = ESC_MESSAGE + csi_state
-            console_command += text
-            sys.stdout.write(text)
-            csi_state = None
-
-    if key_value == ESC:
-        csi_state = ''  # indicates that ESC has been received
-        return
-
-        # process the command here? Maybe return the command?
-    if key_value == '\n':
-        print(f'\nCommand: {console_command}')
-        console_command = ''
-        return
-
-    if key_value==chr(127) or key_value=='\b':
-        if len(console_command) > 0 :
-            console_command = console_command[:-1]
-            sys.stdout.write('\b \b')
-        return
-
-        # no special processing - just collect and echo
-    console_command += key_value
-    sys.stdout.write(key_value)
-
+    return result
+    
+    # this loop operates on a 100ms tick
 while True:
-# make a temperature measurement
+        # update temperature measurement filter
+    thermometer.readADC()
 
         # check and service console and/or web server
     events = poller.poll(100)   # 100ms polling; timeout generates empty list
@@ -293,7 +251,11 @@ while True:
 #           print(f'{loops} loops')
             value = sys.stdin.read(1)
 #           print(f'Got: {ord(value)}')
-            process_console(value)
+            command = line_edit.process_key(value)
+            if command is not None:
+                result = process_command(command)
+                for line in result:
+                    print(line)
 
         elif fd == server :
             request_count += 1
@@ -314,24 +276,3 @@ while True:
                 processRequest(cl, request)
             finally :
                 cl.close()
-
-while True:
-    try :
-        cl, addr = server.accept()
-    except OSError as e:
-        if e.errno != errno.ETIMEDOUT:
-            log.error(f'Connection accept() error: {e}')
-            request_count += 1
-        continue
-
-    log.debug(f'client connected from {addr}')
-    cl.settimeout(5)    # LG WebTV opens connection without sending request
-    try :
-        request = cl.recv(1024)
-    except OSError as e:
-        log.error(f'Connection timeout - closing; {e}')
-    else :
-        processRequest(cl, request)
-    finally :
-        cl.close()
-    request_count += 1

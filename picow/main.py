@@ -6,7 +6,7 @@ from ble_uart_peripheral import BLEUART
 import ujson as json
 from time import sleep
 
-import network
+import lan
 import socket
 import select
 import peacefair
@@ -73,22 +73,20 @@ def on_rx():
 buart.irq(handler=on_rx)
 
     # connect to the wifi
-network.hostname(hostname)
-wlan = network.WLAN(network.STA_IF)
-wlan.active(True)
-wlan.connect(ssid, password)
-while wlan.isconnected() == False:
+wifi = lan.lan(hostname)
+wifi.wifi_connect(ssid, password)
+while wifi.wlan.isconnected() == False:
     log.debug('Waiting for connection...')
     toggleLED()
     sleep(1)
 led.on()
-log.debug(f"wifi rssi: {wlan.status('rssi')}")
-network_ip = wlan.ifconfig()[0]
+log.debug(f"wifi rssi: {wifi.wlan.status('rssi')}")
+network_ip = wifi.wlan.ifconfig()[0]
 log.debug(f'WiFi connected')
 log.debug(f'IP address {network_ip}')
 log.debug(f'Monitoring {hostname}')
-mac = wlan.config('mac')
-mac_address = f'{mac[0]:02x}:{mac[1]:02x}:{mac[2]:02x}:{mac[3]:02x}:{mac[4]:02x}:{mac[5]:02x}'
+mac = wifi.wlan.config('mac')
+mac_address = mac.hex(':')
 
 def open_server(ip):
     address = (ip, 80)

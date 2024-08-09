@@ -1,0 +1,62 @@
+#!/usr/local/bin/python3
+
+# maintain a project version number in _version.py
+
+# usage: version major|minor|patch
+
+import subprocess
+import sys
+import time
+
+version_file = 'picow/_version.py'
+
+if len(sys.argv)!=2 :
+    print(f'Usage: {sys.argv[0]} major|minor|patch)')
+    sys.exit()
+
+major = 0
+minor = 0
+patch = 0
+
+    # extract current version from file
+try:
+    with open(version_file) as f:
+        for line in f:
+            if 'version' in line:
+                (null, version) = line.split('=')
+                version = version.strip().strip('"')
+                version = version.strip('"').split('.')
+                major = int(version[0])
+                minor = int(version[1])
+                patch = int(version[2])
+                break
+except OSError as n:
+    pass
+
+gitResponse = subprocess.run(['git','rev-parse','HEAD'], capture_output=True)
+if gitResponse.returncode != 0:
+    sys.exit('Unable to determine git revision for HEAD')
+elif len(gitResponse.stdout) != 41:
+    sys.exit('Unexpected git revision response')
+else :
+    gitHeadRevision = gitResponse.stdout.rstrip().decode()
+
+match sys.argv[1]:
+    case 'major':
+        major += 1
+        minor = 0
+        patch = 0
+    case 'minor':
+        minor += 1
+        patch = 0
+    case 'patch':
+        patch += 1
+
+with open(version_file, 'w') as f:
+    f.write(f'version = "{major}.{minor}.{patch}"\n')
+    f.write(f'releaseDate = "{time.ctime()}"\n')
+    f.write(f'gitRevision = "{gitHeadRevision}"\n')
+
+print(f'Updated version to {major}.{minor}.{patch}')
+
+

@@ -54,17 +54,28 @@ _nameToLevel = {
 def _checkLevel(level):
     if isinstance(level, int):
         rv = level
-    else :
+    elif str(level) == level:
+        if level not in _nameToLevel:
+            raise ValueError("Unknown level: %r" % (level,))
         rv = _nameToLevel[level]
+    else:
+        raise TypeError("Level not an integer or a valid string: %r" % (level,))
     return rv
 
+_level = WARNING
+
+def basicConfig(self, level=INFO):
+    global _level
+    _level = _checkLevel(level)
+
+# the official logging library has a concept of parent/child loggers, which
+# currently is not implemented here. This hierarchy is expressed in the
+# logger name, as 'a' would be the parent of 'a.b'. With this scheme the
+# child 'a.b' would log based on 
 class getLogger() :
-    def __init__(self, name, level=NOTSET) :
+    def __init__(self, name='root', level=NOTSET) :
         self.name = name
         self.level = level
-
-    def basicConfig(self, level=INFO):
-        self.level = _checkLevel(level)
 
     def clear(self):
         _messages.clear()
@@ -77,13 +88,19 @@ class getLogger() :
         return _messages
 
     def log(self, level, message):
-        if level >= self.level :
+        effectiveLevel = self.level
+        if effectiveLevel==NOTSET:
+            effectiveLevel = _level
+        if _checkLevel(level) >= effectiveLevel :
             m = f'{_levelToName[level]}:{self.name}:{message}'
-            if _console:
+            if _console and _checkLevel(level) >= WARNING:
                 print(m)
             _messages.append(m)
             if len(_messages) > 20:
                 _messages.pop(0)
+
+    def setLevel(self, level):
+        self.level = _checkLevel(level)
 
     def critical(self,message):
         self.log(CRITICAL, message)

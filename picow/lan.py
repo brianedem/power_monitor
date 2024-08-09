@@ -1,7 +1,7 @@
 import network
 import mlogging as logging
 
-log = logging.getLogger('lan')
+log = logging.getLogger(__name__)
 
 status_decode = {
     network.STAT_IDLE:          'idle',
@@ -20,10 +20,11 @@ class lan():
         self.wlan = network.WLAN(network.STA_IF)
         self.wlan.active(True)
         self.mac_address = self.wlan.config('mac').hex(':')
+        self.open_sockets = []
 
     def wifi_scan(self):
             # request list of available AP
-        scan_list = self.wifi.scan()
+        scan_list = self.wlan.scan()
             # extract names and rssi, eliminate duplicates and hidden values
         ap_strength = {}
         for ap in scan_list:
@@ -45,6 +46,8 @@ class lan():
         self.wlan.connect(ssid, password)
 
     def wifi_disconnect(self):
+        for s in self.open_sockets:
+            s.close()
         self.wlan.disconnect()
 
     def open_server(self):
@@ -54,6 +57,7 @@ class lan():
             self.socket = socket.socket()
             self.socket.bind(address)
             self.socket.listen(5)
+            self.open_sockets.append(self.socket)
             return self.socket
         else :
             return None

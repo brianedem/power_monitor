@@ -26,6 +26,7 @@ registers = {
 class powerMeter:
     def __init__(self):
         self.uart = UART(0, baudrate=9600, tx=Pin(0), rx=Pin(1),timeout=200)
+        self.response = None
 
     def read_all(self, units=False) :
         request = struct.pack('>2B2H', 0x01, 0x04, 0, 10)
@@ -33,10 +34,10 @@ class powerMeter:
 
 #       print (request)
         self.uart.write(request)
-        response = self.uart.read(25)
-        if response and len(response) is 25 :
+        self.response = self.uart.read(25)
+        if self.response and len(self.response) is 25 :
                 # first three bytes of response - dev addr, request, length
-            values = struct.unpack('>11H', response[3:])  # 11 16-bit shorts, big endian
+            values = struct.unpack('>11H', self.response[3:])  # 11 16-bit shorts, big endian
             meter_values = {}
             for i in range(len(values)) :
                 if i in registers :

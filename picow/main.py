@@ -6,6 +6,7 @@ from ble_uart_peripheral import BLEUART
 import time
 
 import lan
+import ujson as json
 import socket
 import select
 import peacefair
@@ -205,12 +206,11 @@ def processRequest(cl, request):
         v = power_meter.read_all()
         tempC = thermometer.readTemperature()
         if v is None :
-            cl.send(json.dumps({}))
-        else :
-            if configuration.hostname :
-                v['hostname'] = configuration.hostname
-            v['temperature'] = tempC
-            cl.send(json.dumps(v))
+            v = {}
+        if configuration.hostname :
+            v['hostname'] = configuration.hostname
+        v['temperature'] = tempC
+        cl.send(json.dumps(v))
     else :
         request = request.decode()
         log.error(f'{request} {firstHeaderLine}')
@@ -248,13 +248,13 @@ def process_command(command):
             result.append(f' log')
             result.append(f' status')
             result.append(f' temperature')
-        elif tokens[1].startswith('conf'):    #config
+        elif tokens[1].startswith('conf'):      #config
             result = configuration.show()
-        elif tokens[1].startswith('log') :   #log
+        elif tokens[1].startswith('log') :      #log
             result.append(f'Log:')
             for m in log.show() :
                 result.append( f' {m}')
-        elif tokens[1].startswith('stat') :   #stat
+        elif tokens[1].startswith('stat') :     #stat
             result.append(f'web requests serviced = {request_count}')
             result.append(f'{loops} loops')
             uptime = int(loops*pollTimeoutMs/1000)
@@ -272,12 +272,17 @@ def process_command(command):
                 result.append(f'uptime: {hours} hours, {minutes} minutes')
             else :
                 result.append(f'uptime: {minutes} minutes, {seconds} seconds')
-        elif tokens[1].startswith('temp') :   #temperature
+        elif tokens[1].startswith('temp') :     #temperature
             result.append(f'Temperature = {thermometer.readTemperature()}, loops = {loops}')
-        elif tokens[1].startswith('ver') :   #version
+        elif tokens[1].startswith('ver') :      #version
             result.append(f'Version {_version.version}')
             result.append(f'Date {_version.releaseDate}')
             result.append(f'HEAD {_version.gitRevision}')
+        elif tokens[1].startswith('peace') :    # peacefair response
+            if power_meter.response is None :
+                result.append(f'no peacefair response available')
+            else :
+                result.append(f'last peacefair response: {power_meter.response.hex()}')
         else :
             result.append(f'Error - unknown show object {tokens[1]}')
 

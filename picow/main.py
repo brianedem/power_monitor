@@ -246,14 +246,22 @@ def process_command(command):
             result.append(f'show options:')
             result.append(f' configuration')
             result.append(f' log')
+            result.append(f' peacefair')
             result.append(f' status')
             result.append(f' temperature')
+            result.append(f' version')
+            result.append(f' wifi')
         elif tokens[1].startswith('conf'):      #config
             result = configuration.show()
         elif tokens[1].startswith('log') :      #log
             result.append(f'Log:')
             for m in log.show() :
                 result.append( f' {m}')
+        elif tokens[1].startswith('peace') :    # peacefair response
+            if power_meter.response is None :
+                result.append(f'no peacefair response available')
+            else :
+                result.append(f'last peacefair response: {power_meter.response.hex()}')
         elif tokens[1].startswith('stat') :     #stat
             result.append(f'web requests serviced = {request_count}')
             uptime = int(loops*pollTimeoutMs/1000)
@@ -277,11 +285,8 @@ def process_command(command):
             result.append(f'Version {_version.version}')
             result.append(f'Date {_version.releaseDate}')
             result.append(f'HEAD {_version.gitRevision}')
-        elif tokens[1].startswith('peace') :    # peacefair response
-            if power_meter.response is None :
-                result.append(f'no peacefair response available')
-            else :
-                result.append(f'last peacefair response: {power_meter.response.hex()}')
+        elif tokens[1].startswith('wifi') :     #wifi
+            result = wifi.wifi_scan()
         else :
             result.append(f'Error - unknown show object {tokens[1]}')
 
@@ -303,13 +308,6 @@ def process_command(command):
                 configuration.set('password', tokens[3])
                 wifi.wifi_connect(tokens[2], tokens[3])
             
-    elif tokens[0] == 'scan':
-        if num_tokens==1:
-            result.append(f'scan options:')
-            result.append(f' wifi')
-        elif 'wifi' in tokens[1]:
-            result = wifi.wifi_scan()
-
     elif tokens[0] == 'save':
         if num_tokens==1:
             result.append(f'save options:')
@@ -318,7 +316,11 @@ def process_command(command):
             configuration.save()
 
     else :
-        result.append(f'unimplemented command {command}')
+        result.append(f'Unimplemented command {command}')
+        result.append(f'Available commands are:')
+        result.append(f' show <object>')
+        result.append(f' set <object> <value(s)>')
+        result.append(f' save <object>')
 
     return result
     

@@ -6,11 +6,11 @@ from math import log
 _maxReading = 0xFFFF        # this could be increased to reflect voltage drop to ADC
 _zeroC = 273.15             # 0 degrees C in Kelvin
 _T0 = _zeroC + 25.0         # reference point temperature
-_ntc_beta = 3984            # from the NTC datasheet
 _mu = 4                     # low-pass filter coefficient (2^-_mu)
+_ntc_beta = 3984            # from the NTC datasheet
 
 class thermometer:
-    def __init__(self):
+    def __init__(self, config):
             # set up ADC channel 0 to monitor temperature
             # disable the default pull-down on IO pad used for ADC0
         PADS_GPIO26 = const(0x4001c06c)
@@ -25,6 +25,12 @@ class thermometer:
             # The ADC has noise that causes the temperature reading to bounce around
             # average_adc holds U16.16 value
         self.average_adc = self.temp_adc.read_u16() << 16
+
+        if hasattr(config, 'beta') :
+            self.beta = config.beta
+        else :
+            self.beta = _ntc_beta
+            log.warning('using default value for temperature probe beta')
 
     def readADC(self) :     # IIR filter
         self.average_adc += ((self.temp_adc.read_u16()<<16)-self.average_adc) >> _mu

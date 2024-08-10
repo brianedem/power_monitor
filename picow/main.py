@@ -27,16 +27,16 @@ def toggleLED() :
 logging.basicConfig(logging.DEBUG)
 log = logging.getLogger()
 
+# read configuration data from configuration file
+config_file = 'config.json'
+#config_file = 'passwords.json'
+configuration = config.config(config_file)
+
     # temperature monitoring
 # to reduce sampling noise make continous measurements over time
 # if all async events can not be polled consider running
 # this in _thread.start_new_thread()
-thermometer = ntc_temp.thermometer()
-
-# read configuration data from configuration file
-config_file = 'config.json'
-config_file = 'passwords.json'
-configuration = config.config(config_file)
+thermometer = ntc_temp.thermometer(configuration)
 
 '''
 config_file = 'passwords.json'
@@ -256,7 +256,6 @@ def process_command(command):
                 result.append( f' {m}')
         elif tokens[1].startswith('stat') :     #stat
             result.append(f'web requests serviced = {request_count}')
-            result.append(f'{loops} loops')
             uptime = int(loops*pollTimeoutMs/1000)
             days = uptime//(24*60*60)
             uptime -= days*24*60*60

@@ -1,7 +1,10 @@
 from machine import ADC
 from micropython import const
 from machine import mem32
-from math import log
+import math
+import mlogging as logging
+
+log = logging.getLogger(__name__)
 
 _maxReading = 0xFFFF        # this could be increased to reflect voltage drop to ADC
 _zeroC = 273.15             # 0 degrees C in Kelvin
@@ -27,7 +30,7 @@ class thermometer:
         self.average_adc = self.temp_adc.read_u16() << 16
 
         if hasattr(config, 'beta') :
-            self.beta = config.beta
+            self.beta = int(config.beta)
         else :
             self.beta = _ntc_beta
             log.warning('using default value for temperature probe beta')
@@ -44,7 +47,7 @@ class thermometer:
 #       R_overR0 = 1.0/(float(_maxReading) / float(reading) - 1.0)
         R_overR0 = 1.0/(float(_maxReading) / float(self.readADC()) - 1.0)
 
-        temp_K = 1.0 / (1.0/_T0 + log(R_overR0)/_ntc_beta)
+        temp_K = 1.0 / (1.0/_T0 + math.log(R_overR0)/_ntc_beta)
         temp_C = temp_K - _zeroC
         F = 1.8*temp_C + 32
         return temp_C

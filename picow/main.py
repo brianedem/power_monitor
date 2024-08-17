@@ -1,5 +1,5 @@
 # This file is to be writen to the Raspberry Pi Pico W as main.py
-from machine import Pin
+import machine
 import mlogging as logging
 import ntc_temp
 from ble_uart_peripheral import BLEUART
@@ -19,7 +19,7 @@ pollTimeoutMs = 100   # 100ms polling
 loops = 0
 
 # set up the LED and define routine to toggle
-led = Pin('LED', Pin.OUT)
+led = machine.Pin('LED', machine.Pin.OUT)
 def toggleLED() :
     led.value(not led.value())
 
@@ -37,32 +37,6 @@ configuration = config.config(config_file)
 # if all async events can not be polled consider running
 # this in _thread.start_new_thread()
 thermometer = ntc_temp.thermometer(configuration)
-
-'''
-config_file = 'passwords.json'
-hostname = None
-ssid = None
-password = None
-try:
-    with open(config_file, 'r') as f:
-        config_data = json.load(f)
-        ssid = config_data['ssid']
-        password = config_data['password']
-        if 'hostname' in config_data :
-            hostname = config_data['hostname']
-        else :
-            hostname = ''
-        log.debug(f'file read: ssid={ssid}, password={password}, hostname={hostname}')
-except OSError:
-    log.error(f'No {config_file} file found')
-    while True :
-        sleep(0.2)
-        toggleLED()
-except ValueError:
-    log.error('{config_file} does not have a valid json format')
-except KeyError as key:
-    log.error('No {key} found in file')
-'''
 
     # activate bluetooth interface
 buart = BLEUART(name=configuration.hostname)
@@ -83,13 +57,162 @@ def on_rx():
 
 buart.irq(handler=on_rx)
 
-    # connect to the wifi
+    # set up polling for USB console
+import select
+import sys
+poller = select.poll()
+poller.register(sys.stdin, select.POLLIN)
+
+    # initialize the wifi interface
 wifi = lan.lan(configuration.hostname)
-wifi.wifi_connect(configuration.ssid, configuration.password)
+
+request_count = 0
+
+# The console IO is not buffered so polling is triggered on the first charactor
+def process_command(command):
+    result = []
+    tokens = command.split()
+    num_tokens = len(tokens)
+    if num_tokens == 0:
+        return []
+    if tokens[0].startswith('sh') :     #show
+        if num_tokens==1:
+            result.append(f'show options:')
+            result.append(f' configuration')
+            result.append(f' log')
+            result.append(f' peacefair')
+            result.append(f' status')
+            result.append(f' temperature')
+            result.append(f' version')
+        elif tokens[1].startswith('conf'):      #config
+            result = configuration.show()
+        elif tokens[1].startswith('log') :      #log
+            result.append(f'Log:')
+            for m in log.show() :
+                result.append( f' {m}')
+        elif tokens[1].startswith('peace') :    # peacefair response
+            if power_meter.response is None :
+                result.append(f'no peacefair response available')
+            else :
+                result.append(f'last peacefair response: {power_meter.response.hex()}')
+        elif tokens[1].startswith('stat') :     #stat
+            result.append(f'web requests serviced = {request_count}')
+            uptime = int(loops*pollTimeoutMs/1000)
+            days = uptime//(24*60*60)
+            uptime -= days*24*60*60
+            hours = uptime//(60*60)
+            uptime -= hours*60*60
+            minutes = uptime//60
+            uptime -= minutes*60
+            seconds = uptime
+
+            if days!=0 :
+                result.append(f'uptime: {days} days, {hours} hours, {minutes} minutes')
+            elif hours!=0 :
+                result.append(f'uptime: {hours} hours, {minutes} minutes')
+            else :
+                result.append(f'uptime: {minutes} minutes, {seconds} seconds')
+        elif tokens[1].startswith('temp') :     #temperature
+            result.append(f'Temperature = {thermometer.readTemperature()}, loops = {loops}')
+        elif tokens[1].startswith('ver') :      #version
+            result.append(f'Version {_version.version}')
+            result.append(f'Date {_version.releaseDate}')
+            result.append(f'HEAD {_version.gitRevision}')
+        else :
+            result.append(f'Error - unknown show object {tokens[1]}')
+
+    elif tokens[0] == 'set':
+        if num_tokens==1:
+            result.append(f'set options:')
+            result.append(f' beta <value>')
+            result.append(f' wifi <ssid> <password>')
+        elif num_tokens==2:
+            result.append(f'set {tokens[1]} requires a parameter')
+        elif num_tokens==3:
+            if tokens[1]=='beta' :
+                value = tokens[2]
+                if not value.isdigit() :
+                    result.append(f'Error - beta values must be numeric')
+                else :
+                    configuration.set('beta', int(value))
+            elif tokens[1]=='hostname' :
+                hostname = tokens[2]
+                if hostname.startswith('-') or hostname.endswith('-') :
+                    result.append(f'Error - hostname must not start or end with hyphen')
+                elif hostname.count('-') > 1 :
+                    result.append(f'Error - hostname may have at most one hyphen')
+                elif not hostname[0].isalpha() :
+                    result.append(f'Error - hostname must start with a letter')
+                else :      # no isalnum() - have to check each charactor
+                    for c in ''.join(hostname.split('-')) :
+                        if not c.isalpha() and not c.isdigit() :
+                            result.append(f"Error - the charactor '{c}' is not allowed in hostname")
+                            break;
+                if result==[] :
+                    configuration.set('hostname', hostname)
+            
+    elif tokens[0] == 'save':
+        if num_tokens==1:
+            result.append(f'save options:')
+            result.append(f' config')
+        elif tokens[1]=='config' :
+            configuration.save()
+
+    elif tokens[0] == 'wifi':
+        if num_tokens==1 :
+            result.append(f'wifi options:')
+            result.append(f' connect <net_number> <password>')
+            result.append(f' networks')
+            result.append(f' passwords')
+            result.append(f' status')
+        elif num_tokens==2 :
+            if tokens[1].startswith('net'):     #networks
+                result = wifi.wifi_list()
+            elif tokens[1].startswith('pas'):   #passwords
+                result.append(f'Known networks')
+                password_list = configuration.wifi
+                networks = list(password_list)
+                for i in range(len(networks)) :
+                    network = networks[i]
+                    password = password_list[network]
+                    result.append(f' {i} {network} {password}')
+            elif tokens[1].startswith('stat'):  #status
+                result = wifi.status()
+        elif num_tokens==4:
+            if tokens[1].startswith('con') :    #connect
+                index, password = tokens[2:4]
+                network = wifi.ap_list[int(index)]
+                ssid = network[0]
+
+                configuration.wifi[ssid] = password
+#               wifi.wifi_connect(tokens[2], tokens[3])
+
+    else :
+        result.append(f'Unimplemented command {command}')
+        result.append(f'Available commands are:')
+        result.append(f' show')
+        result.append(f' save')
+        result.append(f' set')
+        result.append(f' wifi')
+
+    return result
+
+    # connect to the wifi
+wifi.wifi_connect(configuration.wifi)
 while wifi.wlan.isconnected() == False:
-    log.debug('Waiting for connection...')
+#   log.debug('Waiting for connection...')
     toggleLED()
-    time.sleep(1)
+    events = poller.poll(pollTimeoutMs)   # timeout generates empty list
+    if len(events) :
+#           print(f'{loops} loops')
+        value = sys.stdin.read(1)
+#           print(f'Got: {ord(value)}')
+        command = line_edit.process_key(value)
+        if command is not None:
+            result = process_command(command)
+            for line in result:
+                print(line)
+#   time.sleep(1)
 led.on()
 log.debug(f"wifi rssi: {wifi.wlan.status('rssi')}")
 network_ip = wifi.wlan.ifconfig()[0]
@@ -217,17 +340,11 @@ def processRequest(cl, request):
         respondError(cl,404, 'File not found')
 
 # set up socket polling to service both USB console and web server
-import select
-import sys
-poller = select.poll()
 #server.settimeout(1)
 server.setblocking(False)
 poller.register(server, select.POLLIN)
-poller.register(sys.stdin, select.POLLIN)
 
 import errno
-
-request_count = 0
 
 x = (
     (('show', 'temp'), (f'Temperature = {thermometer.readTemperature()}, loops = {loops}')),
@@ -235,95 +352,6 @@ x = (
 #   (('set', 'beta', '<integer'>), beta.set),
 #   (('set', 'wifi', '<string>', '<string>'), wifi.set),
 )
-
-# The console IO is not buffered so polling is triggered on the first charactor
-def process_command(command):
-    result = []
-    tokens = command.split()
-    num_tokens = len(tokens)
-    if tokens[0].startswith('sh') :     #show
-        if num_tokens==1:
-            result.append(f'show options:')
-            result.append(f' configuration')
-            result.append(f' log')
-            result.append(f' peacefair')
-            result.append(f' status')
-            result.append(f' temperature')
-            result.append(f' version')
-            result.append(f' wifi')
-        elif tokens[1].startswith('conf'):      #config
-            result = configuration.show()
-        elif tokens[1].startswith('log') :      #log
-            result.append(f'Log:')
-            for m in log.show() :
-                result.append( f' {m}')
-        elif tokens[1].startswith('peace') :    # peacefair response
-            if power_meter.response is None :
-                result.append(f'no peacefair response available')
-            else :
-                result.append(f'last peacefair response: {power_meter.response.hex()}')
-        elif tokens[1].startswith('stat') :     #stat
-            result.append(f'web requests serviced = {request_count}')
-            uptime = int(loops*pollTimeoutMs/1000)
-            days = uptime//(24*60*60)
-            uptime -= days*24*60*60
-            hours = uptime//(60*60)
-            uptime -= hours*60*60
-            minutes = uptime//60
-            uptime -= minutes*60
-            seconds = uptime
-
-            if days!=0 :
-                result.append(f'uptime: {days} days, {hours} hours, {minutes} minutes')
-            elif hours!=0 :
-                result.append(f'uptime: {hours} hours, {minutes} minutes')
-            else :
-                result.append(f'uptime: {minutes} minutes, {seconds} seconds')
-        elif tokens[1].startswith('temp') :     #temperature
-            result.append(f'Temperature = {thermometer.readTemperature()}, loops = {loops}')
-        elif tokens[1].startswith('ver') :      #version
-            result.append(f'Version {_version.version}')
-            result.append(f'Date {_version.releaseDate}')
-            result.append(f'HEAD {_version.gitRevision}')
-        elif tokens[1].startswith('wifi') :     #wifi
-            result = wifi.wifi_scan()
-        else :
-            result.append(f'Error - unknown show object {tokens[1]}')
-
-    elif tokens[0] == 'set':
-        if num_tokens==1:
-            result.append(f'set options:')
-            result.append(f' beta <value>')
-            result.append(f' wifi <ssid> <password>')
-        elif num_tokens==2:
-            result.append(f'set {tokens[1]} requires a parameter')
-        elif num_tokens==3:
-            if tokens[1]=='beta' :
-                configuration.set('beta', tokens[2])
-            elif tokens[1]=='hostname' :
-                configuration.set('hostname', tokens[2])
-        elif num_tokens==4:
-            if tokens[1]=='wifi' :
-                configuration.set('ssid', tokens[2])
-                configuration.set('password', tokens[3])
-                wifi.wifi_connect(tokens[2], tokens[3])
-            
-    elif tokens[0] == 'save':
-        if num_tokens==1:
-            result.append(f'save options:')
-            result.append(f' config')
-        elif tokens[1]=='config' :
-            configuration.save()
-
-    else :
-        result.append(f'Unimplemented command {command}')
-        result.append(f'Available commands are:')
-        result.append(f' show <object>')
-        result.append(f' set <object> <value(s)>')
-        result.append(f' save <object>')
-
-    return result
-    
     # this loop operates on a 100ms tick
 while True:
         # update temperature measurement filter

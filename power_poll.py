@@ -10,8 +10,8 @@ from urllib.error import URLError, HTTPError
 timeout = 2
 socket.setdefaulttimeout(timeout)
 
-reqC = Request('http://192.168.1.77/data.json')
-reqE = Request('http://192.168.1.133/data.json')
+reqC = Request('http://condenser/data.json')
+reqE = Request('http://evaporator/data.json')
 
 import json
 

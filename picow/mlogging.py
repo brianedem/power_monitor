@@ -64,7 +64,7 @@ def _checkLevel(level):
 
 _level = WARNING
 
-def basicConfig(self, level=INFO):
+def basicConfig(level=INFO):
     global _level
     _level = _checkLevel(level)
 

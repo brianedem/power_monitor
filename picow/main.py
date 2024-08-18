@@ -24,7 +24,7 @@ def toggleLED() :
     led.value(not led.value())
 
 # set up logging
-logging.basicConfig(logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger()
 
 # read configuration data from configuration file
@@ -211,7 +211,7 @@ while wifi.wlan.isconnected() == False:
         if command is not None:
             result = process_command(command)
             for line in result:
-                print(line)
+                print(f'*{line}')
 #   time.sleep(1)
 led.on()
 log.debug(f"wifi rssi: {wifi.wlan.status('rssi')}")
@@ -221,6 +221,7 @@ log.debug(f'IP address {network_ip}')
 log.debug(f'Monitoring {configuration.hostname}')
 mac = wifi.wlan.config('mac')
 mac_address = mac.hex(':')
+log.info(f'MAC Address {mac_address}')
 
 def open_server(ip):
     address = (ip, 80)
@@ -229,12 +230,8 @@ def open_server(ip):
     s.listen(5)
     return s
 
-try:
-    server = open_server(network_ip)
-except KeyboardInterrupt:
-    machine.reset()
+wifi.open_server()
 
-log.info(f'{mac_address}')
 
 m_format = """
 Energy  = {0:10.1f} {1}
@@ -341,8 +338,8 @@ def processRequest(cl, request):
 
 # set up socket polling to service both USB console and web server
 #server.settimeout(1)
-server.setblocking(False)
-poller.register(server, select.POLLIN)
+wifi.socket.setblocking(False)
+poller.register(wifi.socket, select.POLLIN)
 
 import errno
 
@@ -371,10 +368,10 @@ while True:
                 for line in result:
                     print(line)
 
-        elif fd == server :
+        elif fd == wifi.socket :
             request_count += 1
             try :
-                cl, addr = server.accept()
+                cl, addr = wifi.socket.accept()
             except OSError as e:
                 if e.errno != errno.ETIMEDOUT:
                     log.error(f'Connection accept() error: {e}')
@@ -390,3 +387,5 @@ while True:
                 processRequest(cl, request)
             finally :
                 cl.close()
+        else :
+            print(f'unknown fd {fd}')

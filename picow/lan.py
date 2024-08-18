@@ -1,5 +1,7 @@
 import network
+import socket
 import mlogging as logging
+import time
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +43,7 @@ class lan():
         self.ap = ''
         self.wifi_scan()
         self.mac_address = self.wlan.config('mac').hex(':')
-        self.open_sockets = []
+        self.socket = None
 
     def wifi_list(self):
         self.wifi_scan()
@@ -58,12 +60,14 @@ class lan():
             if ssid in networks:
                 self.wlan.connect(ssid, networks[ssid])
                 self.ap = ssid
+                log.info(f'WIFI connected to {ssid}')
                 break
 
     def wifi_disconnect(self):
-        for s in self.open_sockets:
-            s.close()
+        if self.socket:
+            socket.close()
         self.wlan.disconnect()
+        log.info(f'Disconnecting from WIFI {self.ap}')
 
     def open_server(self):
         if self.wlan.isconnected() :
@@ -72,10 +76,7 @@ class lan():
             self.socket = socket.socket()
             self.socket.bind(address)
             self.socket.listen(5)
-            self.open_sockets.append(self.socket)
-            return self.socket
-        else :
-            return None
+            log.info(f'Listening on {ip_address}:80')
 
     def status(self):
         response = []
@@ -92,3 +93,22 @@ class lan():
         else :
             response.append( f'Unknown status {status}')
         return response
+
+    def sm(self):
+        wifi_status = self.wlan.status()
+        if status != network.STAT_GOT_IP :
+            return
+        if self.socket is None:
+            self.open_server()
+
+    def test(self):
+        prev_status = 100
+        while True:
+            wifi_status = self.wlan.status()
+            if wifi_status != prev_status :
+                if wifi_status not in status_decode :
+                    print(f'{time.localtime} {wifi_status}')
+                else :
+                    print(f'{time.localtime()} {status_decode[wifi_status]}')
+            prev_status = wifi_status
+        

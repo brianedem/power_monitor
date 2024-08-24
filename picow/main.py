@@ -1,14 +1,19 @@
 # This file is to be writen to the Raspberry Pi Pico W as main.py
 import machine
+import select
+import time
+import socket
+import errno
+import select
+import sys
+
+from ble_uart_peripheral import BLEUART
+import ujson as json
+
 import mlogging as logging
 import ntc_temp
-from ble_uart_peripheral import BLEUART
-import time
 
 import lan
-import ujson as json
-import socket
-import select
 import peacefair
 import line_edit
 import config
@@ -29,25 +34,17 @@ log = logging.getLogger()
 
 # read configuration data from configuration file
 config_file = 'config.json'
-#config_file = 'passwords.json'
 configuration = config.config(config_file)
 
-    # temperature monitoring
-# to reduce sampling noise make continous measurements over time
-# if all async events can not be polled consider running
-# this in _thread.start_new_thread()
+    # set up temperature monitoring
 thermometer = ntc_temp.thermometer(configuration)
+
+    # set up access to the power meter
+power_meter = peacefair.powerMeter()
 
     # activate bluetooth interface
 buart = BLEUART(name=configuration.hostname)
-# possible commands:
-#  show ap                      - shows available wifi access points
-#  set ap <ssid> <password>     - stores ssid and password in file; connects to ap
-#  show hostname
-#  set hostname <name>
-#  show log                     - dumps last 20 log entries
-#  set loglevel <level>         - sets the logging level
-#  
+
 def on_rx():
     command = buart.read().decode().strip()
     log.debug(f'bluetooth rx: {command}')
@@ -56,17 +53,6 @@ def on_rx():
         buart.write(line+'\n')
 
 buart.irq(handler=on_rx)
-
-    # set up polling for USB console
-import select
-import sys
-poller = select.poll()
-poller.register(sys.stdin, select.POLLIN)
-
-    # initialize the wifi interface
-wifi = lan.lan(configuration.hostname)
-
-request_count = 0
 
 # The console IO is not buffered so polling is triggered on the first charactor
 def process_command(command):
@@ -125,7 +111,6 @@ def process_command(command):
         if num_tokens==1:
             result.append(f'set options:')
             result.append(f' beta <value>')
-            result.append(f' wifi <ssid> <password>')
         elif num_tokens==2:
             result.append(f'set {tokens[1]} requires a parameter')
         elif num_tokens==3:
@@ -148,8 +133,12 @@ def process_command(command):
                         if not c.isalpha() and not c.isdigit() :
                             result.append(f"Error - the charactor '{c}' is not allowed in hostname")
                             break;
-                if result==[] :
+                if result==[] :     # no result implies no errors, so safe to set hostname
                     configuration.set('hostname', hostname)
+            else :
+                result.append(f'Error - unknown set object {tokens[1]}')
+        else :
+            result.append(f'Error - excessive number of parameters for set command')
             
     elif tokens[0] == 'save':
         if num_tokens==1:
@@ -197,42 +186,6 @@ def process_command(command):
 
     return result
 
-    # connect to the wifi
-wifi.wifi_connect(configuration.wifi)
-while wifi.wlan.isconnected() == False:
-#   log.debug('Waiting for connection...')
-    toggleLED()
-    events = poller.poll(pollTimeoutMs)   # timeout generates empty list
-    if len(events) :
-#           print(f'{loops} loops')
-        value = sys.stdin.read(1)
-#           print(f'Got: {ord(value)}')
-        command = line_edit.process_key(value)
-        if command is not None:
-            result = process_command(command)
-            for line in result:
-                print(f'*{line}')
-#   time.sleep(1)
-led.on()
-log.debug(f"wifi rssi: {wifi.wlan.status('rssi')}")
-network_ip = wifi.wlan.ifconfig()[0]
-log.debug(f'WiFi connected')
-log.debug(f'IP address {network_ip}')
-log.debug(f'Monitoring {configuration.hostname}')
-mac = wifi.wlan.config('mac')
-mac_address = mac.hex(':')
-log.info(f'MAC Address {mac_address}')
-
-def open_server(ip):
-    address = (ip, 80)
-    s = socket.socket()
-    s.bind(address)
-    s.listen(5)
-    return s
-
-wifi.open_server()
-
-
 m_format = """
 Energy  = {0:10.1f} {1}
 Voltage = {2:10.1f} {3}
@@ -263,20 +216,6 @@ Temp    = {2:10.1f} C
     </body>
 </html>
 """
-
-power_meter = peacefair.powerMeter()
-v=power_meter.read_all(units=True)
-tempC = thermometer.readTemperature()
-
-if v is None :
-    log.error('Power meter hardware not responding')
-else :
-    log.debug(m_format.format(
-        v['energy'][0],v['energy'][1],
-        v['voltage'][0],v['voltage'][1],
-        v['power'][0],v['power'][1],
-        v['current'][0],v['current'][1],
-        mac_address, configuration.hostname, tempC))
 
 errorMessages = {
     400:'Bad Request',
@@ -312,14 +251,14 @@ def processRequest(cl, request):
         cl.send('HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
         if v is None :
             cl.send(html_error.format(
-                mac_address, configuration.hostname, tempC))
+                wifi.mac_address, configuration.hostname, tempC))
         else :
             cl.send(html.format(
                 v['energy'][0],v['energy'][1],
                 v['voltage'][0],v['voltage'][1],
                 v['power'][0],v['power'][1],
                 v['current'][0],v['current'][1],
-                mac_address, configuration.hostname, tempC))
+                wifi.mac_address, configuration.hostname, tempC))
         
     elif target == b'/data.json' :
         cl.send('HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
@@ -336,23 +275,38 @@ def processRequest(cl, request):
         log.error(f'{request} {firstHeaderLine}')
         respondError(cl,404, 'File not found')
 
-# set up socket polling to service both USB console and web server
-#server.settimeout(1)
-wifi.socket.setblocking(False)
-poller.register(wifi.socket, select.POLLIN)
+    # set up polling for USB console
+poller = select.poll()
+poller.register(sys.stdin, select.POLLIN)
 
-import errno
+    # initialize the wifi interface
+wifi = lan.lan(configuration.hostname)
 
-x = (
-    (('show', 'temp'), (f'Temperature = {thermometer.readTemperature()}, loops = {loops}')),
-    (('scan', 'wifi'), wifi),
-#   (('set', 'beta', '<integer'>), beta.set),
-#   (('set', 'wifi', '<string>', '<string>'), wifi.set),
-)
-    # this loop operates on a 100ms tick
+    # connect to the wifi
+wifi.wifi_connect(configuration.wifi)
+
+server = None
+request_count = 0
+
+    # this loop operates on a 100ms tick managed by the poller timeout
 while True:
         # update temperature measurement filter
     thermometer.readADC()
+
+        # set up the server socket when the network comes up
+    if server is None :
+        if wifi.wlan.isconnected() :
+            ip_address = wifi.wlan.ifconfig()[0]
+            address = (ip_address, 80)
+            server = socket.socket()
+            server.bind(address)
+            server.listen(5)
+            server.setblocking(False)
+            poller.register(server, select.POLLIN)
+            log.info(f'Server is listening on {ip_address}:80')
+            led.on()
+        else :
+            toggleLED()
 
         # check and service console and/or web server
     events = poller.poll(pollTimeoutMs)   # timeout generates empty list
@@ -368,10 +322,10 @@ while True:
                 for line in result:
                     print(line)
 
-        elif fd == wifi.socket :
+        elif fd == server :
             request_count += 1
             try :
-                cl, addr = wifi.socket.accept()
+                cl, addr = server.accept()
             except OSError as e:
                 if e.errno != errno.ETIMEDOUT:
                     log.error(f'Connection accept() error: {e}')

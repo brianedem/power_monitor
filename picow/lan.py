@@ -1,5 +1,4 @@
 import network
-import socket
 import mlogging as logging
 import time
 
@@ -43,7 +42,6 @@ class lan():
         self.ap = ''
         self.wifi_scan()
         self.mac_address = self.wlan.config('mac').hex(':')
-        self.socket = None
 
     def wifi_list(self):
         self.wifi_scan()
@@ -54,7 +52,9 @@ class lan():
         return response
 
     def wifi_connect(self, networks):
-# should we check to see if currently connected?
+        if self.wlan.isconnected():
+            self.wifi_disconnect()
+            time.sleep(1)
         for ap in self.wlan.scan() :
             ssid = ap[0].decode() 
             if ssid in networks:
@@ -64,19 +64,8 @@ class lan():
                 break
 
     def wifi_disconnect(self):
-        if self.socket:
-            socket.close()
         self.wlan.disconnect()
         log.info(f'Disconnecting from WIFI {self.ap}')
-
-    def open_server(self):
-        if self.wlan.isconnected() :
-            ip_address = self.wlan.ifconfig()[0]
-            address = (ip_address, 80)
-            self.socket = socket.socket()
-            self.socket.bind(address)
-            self.socket.listen(5)
-            log.info(f'Listening on {ip_address}:80')
 
     def status(self):
         response = []
@@ -93,13 +82,6 @@ class lan():
         else :
             response.append( f'Unknown status {status}')
         return response
-
-    def sm(self):
-        wifi_status = self.wlan.status()
-        if status != network.STAT_GOT_IP :
-            return
-        if self.socket is None:
-            self.open_server()
 
     def test(self):
         prev_status = 100

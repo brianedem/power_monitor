@@ -35,10 +35,10 @@ class powerMeter:
 #       print (request)
         self.uart.write(request)
         self.response = self.uart.read(25)
+        meter_values = {}
         if self.response and len(self.response) is 25 :
                 # first three bytes of response - dev addr, request, length
             values = struct.unpack('>11H', self.response[3:])  # 11 16-bit shorts, big endian
-            meter_values = {}
             for i in range(len(values)) :
                 if i in registers :
                     reg = registers[i]
@@ -49,8 +49,4 @@ class powerMeter:
                         meter_values[reg[2]] = (value*reg[1], reg[3])
                     else :
                         meter_values[reg[2]] = value*reg[1]
-        else :
-            meter_values = None
         return meter_values
-
-

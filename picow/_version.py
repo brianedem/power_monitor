@@ -1,3 +1,3 @@
-version = "2.1.0"
-releaseDate = "Sat Aug 10 08:07:14 2024"
-gitRevision = "d73ca98453f71671cc098ee9c4e1e2a3e225dabe"
+version = "3.0.0"
+releaseDate = "Mon Aug 26 15:33:06 2024"
+gitRevision = "1186773e9180959cc8e6a2e58529949c004411d6"

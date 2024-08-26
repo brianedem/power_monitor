@@ -4,7 +4,6 @@ import select
 import time
 import socket
 import errno
-import select
 import sys
 
 from ble_uart_peripheral import BLEUART
@@ -18,10 +17,10 @@ import peacefair
 import line_edit
 import config
 import _version
+import uptime
 
     # rough sense of time for uptime reporting
 pollTimeoutMs = 100   # 100ms polling
-loops = 0
 
 # set up the LED and define routine to toggle
 led = machine.Pin('LED', machine.Pin.OUT)
@@ -66,7 +65,7 @@ def process_command(command):
             result.append(f'show options:')
             result.append(f' configuration')
             result.append(f' log')
-            result.append(f' peacefair')
+            result.append(f' power')
             result.append(f' status')
             result.append(f' temperature')
             result.append(f' version')
@@ -76,41 +75,37 @@ def process_command(command):
             result.append(f'Log:')
             for m in log.show() :
                 result.append( f' {m}')
-        elif tokens[1].startswith('peace') :    # peacefair response
-            if power_meter.response is None :
-                result.append(f'no peacefair response available')
+        elif tokens[1].startswith('power') :    # peacefair response
+            values = power_meter.read_all()
+            if len(values) == 0 :
+                result.append(f'no power meter response')
             else :
-                result.append(f'last peacefair response: {power_meter.response.hex()}')
+                for item in values :
+                    result.append(f'{item:11}: {values[item]}')
         elif tokens[1].startswith('stat') :     #stat
             result.append(f'web requests serviced = {request_count}')
-            uptime = int(loops*pollTimeoutMs/1000)
-            days = uptime//(24*60*60)
-            uptime -= days*24*60*60
-            hours = uptime//(60*60)
-            uptime -= hours*60*60
-            minutes = uptime//60
-            uptime -= minutes*60
-            seconds = uptime
-
-            if days!=0 :
-                result.append(f'uptime: {days} days, {hours} hours, {minutes} minutes')
-            elif hours!=0 :
-                result.append(f'uptime: {hours} hours, {minutes} minutes')
-            else :
-                result.append(f'uptime: {minutes} minutes, {seconds} seconds')
+            result.append(f'uptime: {uptime.uptime()}')
         elif tokens[1].startswith('temp') :     #temperature
-            result.append(f'Temperature = {thermometer.readTemperature()}, loops = {loops}')
+            if 'missing' in thermometer.status :
+                result.append('No temperature sensor available')
+            else :
+                temperature = thermometer.readTemperature()
+                if temperature is None :
+                    result.append(f'Error - {thermometer.status}')
+                else :
+                    result.append(f'Temperature = {temperature:.1f} C ({1.8*temperature+32:.1f} F)')
         elif tokens[1].startswith('ver') :      #version
             result.append(f'Version {_version.version}')
             result.append(f'Date {_version.releaseDate}')
             result.append(f'HEAD {_version.gitRevision}')
         else :
-            result.append(f'Error - unknown show object {tokens[1]}')
+            result.append(f'Error - unknown object {tokens[1]}')
 
     elif tokens[0] == 'set':
         if num_tokens==1:
             result.append(f'set options:')
             result.append(f' beta <value>')
+            result.append(f' hostname <value>')
         elif num_tokens==2:
             result.append(f'set {tokens[1]} requires a parameter')
         elif num_tokens==3:
@@ -150,12 +145,12 @@ def process_command(command):
     elif tokens[0] == 'wifi':
         if num_tokens==1 :
             result.append(f'wifi options:')
-            result.append(f' connect <net_number> <password>')
-            result.append(f' networks')
+            result.append(f' connect <ap_index> <password>')
+            result.append(f' scan')
             result.append(f' passwords')
             result.append(f' status')
         elif num_tokens==2 :
-            if tokens[1].startswith('net'):     #networks
+            if tokens[1].startswith('scan'):     #networks
                 result = wifi.wifi_list()
             elif tokens[1].startswith('pas'):   #passwords
                 result.append(f'Known networks')
@@ -170,11 +165,17 @@ def process_command(command):
         elif num_tokens==4:
             if tokens[1].startswith('con') :    #connect
                 index, password = tokens[2:4]
-                network = wifi.ap_list[int(index)]
-                ssid = network[0]
+                if not index.isdigit() :
+                    result.append(f'Error - the index parameter {index} must be numeric')
+                elif 0 <= int(index) < len(wifi.ap_list):
+                    network = wifi.ap_list[int(index)]
+                    ssid = network[0]
+                    configuration.wifi[ssid] = password
+                    result.append(f'Use "save config" to add ssid/password to configuration file')
+                    wifi.wifi_connect(configuration.wifi)
+                else :
+                    result.append(f'Error - index parameter {index} is out of range')
 
-                configuration.wifi[ssid] = password
-#               wifi.wifi_connect(tokens[2], tokens[3])
 
     else :
         result.append(f'Unimplemented command {command}')
@@ -186,37 +187,17 @@ def process_command(command):
 
     return result
 
-m_format = """
-Energy  = {0:10.1f} {1}
-Voltage = {2:10.1f} {3}
-Power   = {4:10.1f} {5}
-Current = {6:10.1f} {7}
-Temp    = {10:10.1f} C
-"""
-html = """<!DOCTYPE html>
+html_head = """<!DOCTYPE html>
 <html>
-    <head> <title>Pico W Power Monitor</title> </head>
-    <body> <h1>Pico W {9} Power Monitor</h1>
-        <pre style="font-size:4vw;">
-MAC Address: {8}
-""" + m_format + """
-        </pre>
-    </body>
-</html>
-"""
-html_error = """<!DOCTYPE html>
-<html>
-    <head> <title>Pico W Power Monitor</title> </head>
-    <body> <h1>Pico W {1} Power Monitor</h1>
+    <head> <title>{0}</title> </head>
+    <body> <h1>{0} Power Monitor</h1>
         <pre style="font-size:3vw;">
-MAC Address: {0}
-Error - Power meter hardware not responding
-Temp    = {2:10.1f} C
+"""
+html_tail = """
         </pre>
     </body>
 </html>
 """
-
 errorMessages = {
     400:'Bad Request',
     404:'Not Found',
@@ -245,30 +226,37 @@ def processRequest(cl, request):
         respondError(cl,405, 'Only GET method supported')		# Method not supported
         return
     if target == b'/' or target == b'/index.html' :
-        v = power_meter.read_all(units=True)
-        tempC = thermometer.readTemperature()
+        html_body = ''
+
+        values = power_meter.read_all(units=True)
+        for item in values :
+            html_body += f'{item:11} = {values[item][0]:10.1f} {values[item][1]}\n'
+
+        temperature = thermometer.readTemperature()
+        if 'missing' in thermometer.status :
+            pass
+        elif temperature is None :
+            html_body += f'Temperature: {thermometer.status}\n'
+        else :
+            html_body += f'Temperature = {temperature:2.1f} C\n'
 
         cl.send('HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
-        if v is None :
-            cl.send(html_error.format(
-                wifi.mac_address, configuration.hostname, tempC))
-        else :
-            cl.send(html.format(
-                v['energy'][0],v['energy'][1],
-                v['voltage'][0],v['voltage'][1],
-                v['power'][0],v['power'][1],
-                v['current'][0],v['current'][1],
-                wifi.mac_address, configuration.hostname, tempC))
+        cl.send(html_head.format(wifi.hostname) + html_body + html_tail)
         
     elif target == b'/data.json' :
         cl.send('HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
-        v = power_meter.read_all()
-        tempC = thermometer.readTemperature()
-        if v is None :
-            v = {}
+        v = {}
+        v |= power_meter.read_all()
+
+        if 'missing' not in thermometer.status :
+            temperature = thermometer.readTemperature()
+            if temperature is None :
+                v['temperature'] = thermometer.status
+            else :
+                v['temperature'] = temperature
+
         if configuration.hostname :
             v['hostname'] = configuration.hostname
-        v['temperature'] = tempC
         cl.send(json.dumps(v))
     else :
         request = request.decode()
@@ -310,12 +298,9 @@ while True:
 
         # check and service console and/or web server
     events = poller.poll(pollTimeoutMs)   # timeout generates empty list
-    loops += 1
     for fd, flag in events:
         if fd == sys.stdin :
-#           print(f'{loops} loops')
             value = sys.stdin.read(1)
-#           print(f'Got: {ord(value)}')
             command = line_edit.process_key(value)
             if command is not None:
                 result = process_command(command)

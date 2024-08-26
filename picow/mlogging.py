@@ -81,10 +81,6 @@ class getLogger() :
         _messages.clear()
 
     def show(self):
-#       m = ''
-#       for l in _messages:
-#           m += l
-#       return m
         return _messages
 
     def log(self, level, message):

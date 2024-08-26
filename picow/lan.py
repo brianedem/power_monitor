@@ -60,7 +60,7 @@ class lan():
             if ssid in networks:
                 self.wlan.connect(ssid, networks[ssid])
                 self.ap = ssid
-                log.info(f'WIFI connected to {ssid}')
+                log.info(f'WIFI is connected to {ssid}')
                 break
 
     def wifi_disconnect(self):
@@ -82,15 +82,3 @@ class lan():
         else :
             response.append( f'Unknown status {status}')
         return response
-
-    def test(self):
-        prev_status = 100
-        while True:
-            wifi_status = self.wlan.status()
-            if wifi_status != prev_status :
-                if wifi_status not in status_decode :
-                    print(f'{time.localtime} {wifi_status}')
-                else :
-                    print(f'{time.localtime()} {status_decode[wifi_status]}')
-            prev_status = wifi_status
-        

@@ -7,7 +7,7 @@ import json
 import time
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(filename='power_poll.log', encoding='utf-8', level=logging.INFO)
+logging.basicConfig(filename='power_poll.log', encoding='utf-8', level=logging.DEBUG)
 
     # if 'DNS Assist' is enabled in the network privicy settings then
     # host names with the .local suffix are forwarded to their DNS server
@@ -27,30 +27,33 @@ timeout = 2
 socket.setdefaulttimeout(timeout)
 
 devices = ('condenser', 'evaporator', 'waterheater')
-#devices = ('condenser', 'evaporator')
 
-mapping = {}
-
+m = {}
+for device in devices:
+    ip = socket.gethostbyname(device)
+    m[device] = ip
+print(m)
 def pollDevice(dev) :
     req = Request(f'http://{dev+search}/data.json')
     values = {}
     try:
-        response = urlopen(req)
+        with urlopen(req) as response :
+            content_type = response.getheader('Content-type')
+            if 'json' in content_type :
+                body = response.read()
+                logger.debug(body)
+                values = json.loads(body)
+            else :
+                print('{dev}: json content not found')
+                print(response.read())
+
     except HTTPError as e:
         logger.exception(f'Request to {dev} {e.code}')
     except URLError as e:
         logger.exception(f'Request to {dev} {e.reason}')
     except TimeoutError :
         logger.exception(f'Request to {dev} timed out')
-    else :
-        content_type = response.getheader('Content-type')
-        if 'json' in content_type :
-            body = response.read()
-            logger.debug(body)
-            values = json.loads(body)
-        else :
-            print('{dev}: json content not found')
-            print(response.read())
+
     return values
 
 def extract(data, values) :
@@ -65,9 +68,11 @@ fd = open('data.json', 'a', encoding='utf-8')
 while True :
     responses = {'time': time.localtime()}
     for device in devices :
-        values = extract(pollDevice(device), ('voltage', 'current', 'power', 'energy', 'temperature'))
-        if 'temperature' in values and values['temperature'] > 55 :
-            del values['temperature']
+        values = extract(pollDevice(m[device]), ('voltage', 'current', 'power', 'energy', 'temperature'))
+        if 'temperature' in values :
+            value = values['temperature']
+            if isinstance(value, str) :
+                del values['temperature']
         responses[device] = values
 
 #   print(json.dumps(responses))

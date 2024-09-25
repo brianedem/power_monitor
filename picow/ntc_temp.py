@@ -71,9 +71,11 @@ class thermometer:
             # check for bad sensor
         if value < _shorted :
             self.status = 'NTC shorted'
+            log.warning(self.status)
             return None
         if value > _open :
             self.status = 'NTC open'
+            log.warning(self.status)
             return None
         self.status = 'OK'
         

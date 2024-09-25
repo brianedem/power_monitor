@@ -83,6 +83,7 @@ def process_command(command):
                 for item in values :
                     result.append(f'{item:11}: {values[item]}')
         elif tokens[1].startswith('stat') :     #stat
+            result.append(f'web server state = {server_state}')
             result.append(f'web requests serviced = {request_count}')
             result.append(f'uptime: {uptime.uptime()}')
         elif tokens[1].startswith('temp') :     #temperature
@@ -204,13 +205,19 @@ errorMessages = {
     405:'Method Not Allowed'
     }
 def respondError(cl, code, explain=None):
-    cl.send(f'HTTP/1.0 {code} {errorMessages[code]}\r\nContent-type: text/html\r\n\r\n')
-    if explain :
-        cl.send(f'<!DOCTYPE html><html><head><title>{errorMessages[code]}</title></head>'+
-                f'<body><center><h1>{explain}</h1></center></body></html>\r\n')
+    try :
+        cl.send(f'HTTP/1.0 {code} {errorMessages[code]}\r\nContent-type: text/html\r\n\r\n')
+        if explain :
+            cl.send(f'<!DOCTYPE html><html><head><title>{errorMessages[code]}</title></head>'+
+                    f'<body><center><h1>{explain}</h1></center></body></html>\r\n')
+    except ConnectionResetError:
+        log.error(f'ConnectionResetError while generating error response')
+
     return
+
 def processRequest(cl, request):
     log.debug(request)
+    response = ''
     try :
         header, body = request.split(b'\r\n\r\n', 1)
     except ValueError :
@@ -240,11 +247,11 @@ def processRequest(cl, request):
         else :
             html_body += f'Temperature = {temperature:2.1f} C\n'
 
-        cl.send('HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
-        cl.send(html_head.format(wifi.hostname) + html_body + html_tail)
+        response = 'HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n'
+        response += html_head.format(wifi.hostname) + html_body + html_tail
         
     elif target == b'/data.json' :
-        cl.send('HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
+        response = 'HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n'
         v = {}
         v |= power_meter.read_all()
 
@@ -257,11 +264,17 @@ def processRequest(cl, request):
 
         if configuration.hostname :
             v['hostname'] = configuration.hostname
-        cl.send(json.dumps(v))
+        response += json.dumps(v)
+
     else :
         request = request.decode()
         log.error(f'{request} {firstHeaderLine}')
         respondError(cl,404, 'File not found')
+        return
+    try :
+        cl.send(response)
+    except ConnectionResetError:
+        log.error(f'ConnectionResetError while responding to request')
 
     # set up polling for USB console
 poller = select.poll()
@@ -275,56 +288,64 @@ wifi.wifi_connect(configuration.wifi)
 
 server = None
 request_count = 0
+server_state = 'idle'
 
     # this loop operates on a 100ms tick managed by the poller timeout
-while True:
-        # update temperature measurement filter
-    thermometer.readADC()
+try:
+    while True:
+            # update temperature measurement filter
+        thermometer.readADC()
 
-        # set up the server socket when the network comes up
-    if server is None :
-        if wifi.wlan.isconnected() :
-            ip_address = wifi.wlan.ifconfig()[0]
-            address = (ip_address, 80)
-            server = socket.socket()
-            server.bind(address)
-            server.listen(5)
-            server.setblocking(False)
-            poller.register(server, select.POLLIN)
-            log.info(f'Server is listening on {ip_address}:80')
-            led.on()
-        else :
-            toggleLED()
-
-        # check and service console and/or web server
-    events = poller.poll(pollTimeoutMs)   # timeout generates empty list
-    for fd, flag in events:
-        if fd == sys.stdin :
-            value = sys.stdin.read(1)
-            command = line_edit.process_key(value)
-            if command is not None:
-                result = process_command(command)
-                for line in result:
-                    print(line)
-
-        elif fd == server :
-            request_count += 1
-            try :
-                cl, addr = server.accept()
-            except OSError as e:
-                if e.errno != errno.ETIMEDOUT:
-                    log.error(f'Connection accept() error: {e}')
-                continue
-
-            log.debug(f'client connected from {addr}')
-            cl.settimeout(5)    # LG WebTV opens connection without sending request
-            try :
-                request = cl.recv(1024)
-            except OSError as e:
-                log.error(f'Connection timeout - closing; {e}')
+            # set up the server socket when the network comes up
+        if server is None :
+            if wifi.wlan.isconnected() :
+                ip_address = wifi.wlan.ifconfig()[0]
+                address = (ip_address, 80)
+                server = socket.socket()
+                server.bind(address)
+                server.listen(5)
+                server.setblocking(False)
+                poller.register(server, select.POLLIN)
+                log.info(f'Server is listening on {ip_address}:80')
+                led.on()
             else :
-                processRequest(cl, request)
-            finally :
-                cl.close()
-        else :
-            print(f'unknown fd {fd}')
+                toggleLED()
+
+            # check and service console and/or web server
+        events = poller.poll(pollTimeoutMs)   # timeout generates empty list
+        for fd, flag in events:
+            if fd == sys.stdin :
+                value = sys.stdin.read(1)
+                command = line_edit.process_key(value)
+                if command is not None:
+                    result = process_command(command)
+                    for line in result:
+                        print(line)
+
+            elif fd == server :
+                server_state = 'busy'
+                request_count += 1
+                try :
+                    cl, addr = server.accept()
+                except OSError as e:
+                    if e.errno != errno.ETIMEDOUT:
+                        log.error(f'Connection accept() error: {e}')
+                    continue
+
+                server_state = addr
+                log.debug(f'client connected from {addr}')
+                cl.settimeout(5)    # LG WebTV opens connection without sending request
+                try :
+                    request = cl.recv(1024)
+                except OSError as e:
+                    log.error(f'Connection timeout - closing; {e}')
+                else :
+                    processRequest(cl, request)
+                finally :
+                    cl.close()
+                server_state = 'idle'
+            else :
+                log.error(f'unknown fd {fd}')
+except Exception as e:
+    e_text = str(e)
+    log.error(f'Fatal exceptioni in main loop - {e_text}')

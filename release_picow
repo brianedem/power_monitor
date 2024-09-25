@@ -11,7 +11,7 @@ import time
 version_file = 'picow/_version.py'
 
 if len(sys.argv)!=2 :
-    print(f'Usage: {sys.argv[0]} major|minor|patch)')
+    print(f'Usage: {sys.argv[0]} major|minor|patch|hash)')
     sys.exit()
 
 major = 0
@@ -51,6 +51,9 @@ match sys.argv[1]:
         patch = 0
     case 'patch':
         patch += 1
+    case 'hash':
+        # hash allows the gitRevision to be refreshed without changing the version
+        pass
 
 with open(version_file, 'w') as f:
     f.write(f'version = "{major}.{minor}.{patch}"\n')

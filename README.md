@@ -15,3 +15,8 @@ The system supports an external 10K NTC temperature sensor. The beta of the sens
 ## power_poll.py
 This file contains demonstration code showing how a workstation application can pick
 up data from one or more devices running the server code.
+
+## analyze.py
+
+## wheater.py
+This application monitors the heat-pump water heater power usage, tracking its mode from the power readings. Changes in mode are reported via ntfy, and energy used in each cycle is tracked. Daily energy use is logged to a TBD database

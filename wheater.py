@@ -82,20 +82,43 @@ class State(Enum):
 
 prev_state = State.STARTUP
 prev_element = None
-start_time_sec = time.time()
-start_energy = 0
+state_start_time = time.time()
+state_start_energy = None
+day_start_time = time.localtime()
+day_start_energy = None
 
 while True:
-    time.sleep(10)
+    time.sleep(30)
+
+    # read the power meter
     values = pollDevice(device)
     try:
         power = values['power']
         energy = values['energy']
     except KeyError:
-        print('missing power or energy from returned values')
+        log.warning('Missing power or energy from returned values')
         continue
 
-    # determine what the system is doing
+    # application startup values from first successful measurement
+    if state_start_energy is None:        # incomplete day
+        day_start_energy = energy
+        state_start_energy = energy
+
+    # capture time that measurement was made
+    current_time_sec = time.time()                   # in seconds since epoc
+    local_time = time.localtime(current_time_sec)    # and in struct_time
+
+    # report summary of yesterday's energy use
+    # *** add to database?
+    if local_time.tm_yday != day_start_time.tm_yday:
+        if day_start_energy:
+            timestamp = time.strftime('%a %b %d', day_start_time)
+            energy_used = energy - day_start_energy
+            print(f'{timestamp}: {energy_used:.3f} Wh used yesterday')
+        day_start_time = local_time
+        day_start_energy = energy
+
+    # determine what state the system currently is in
     if power < 100:         # compressor power is ~440W
         state = State.IDLE
     elif power < 2000:      # resistive elements should be 5kW
@@ -110,17 +133,18 @@ while True:
         prev_state = state  # startup to idle is not interesting
         continue
 
-    current_time_sec = time.time()                  # float seconds
-    local_time_struct = time.localtime(current_time_sec)   # struct_time
-    time_duration_min = int((current_time_sec - start_time_sec)/60)
-    energy_used = energy - start_energy
+    # at this point we have confirmed that an event has occured
+    # collect notifications and send in one message
     notification = []
+
     # if something is turning off report event and results
     if prev_state is State.COMPRESSOR or prev_state is State.RESISTIVE:
         notification.append(f'{prev_element} is off')
         # placeholder for database update
-        print(f'{time.asctime(local_time_struct)}: ' +
-            f'{prev_element} ran for {time_duration_min} minutes and used {energy_used} kWh')
+        prev_state_duriation = int((current_time_sec - state_start_time)/60)
+        energy_used = energy - state_start_energy
+        print(f'{time.asctime(local_time)}: ' +
+            f'{prev_element} ran for {prev_state_duriation} minutes and used {energy_used:.3f} kWh')
             
     # if something is turning on report event
     if state is State.COMPRESSOR:
@@ -130,15 +154,15 @@ while True:
         notification.append('Resistive heater is on')
         prev_element = 'Resistive heater'
 
-    timestamp = time.strftime('%a %b %d %H:%M', local_time_struct)
+    timestamp = time.strftime('%a %b %d %H:%M', local_time)
     for n in notification:
         log.info(n)
         print(f'{timestamp}: {n}')
         try:
             requests.post(f'http://ntfy.sh/{ntfy_key}', data=f'{timestamp}: {n}')
         except:
-            log.error('post to ntfy failed')
+            log.warning('post to ntfy failed')
 
     prev_state = state
-    start_time_sec = current_time_sec
-    start_energy = energy
+    state_start_time = current_time_sec
+    state_start_energy = energy

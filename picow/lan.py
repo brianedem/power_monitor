@@ -16,22 +16,28 @@ status_decode = {
 class lan():
 
     def wifi_scan(self):
-            # request list of available AP
-        scan_list = self.wlan.scan()
-            # extract names and rssi, eliminate duplicates and hidden values
-        ap_strength = {}
-        for ap in scan_list:
-            ap_name = ap[0].decode()
-            ap_rssi = ap[3]
-            if ap_name in ap_strength:
-                if ap_rssi > ap_strength[ap_name]:
+        if self.time_of_last_scan is None:
+            seconds_since_last_scan = 10
+        else:
+            seconds_since_last_scan = time.time() - self.time_of_last_scan
+        if seconds_since_last_scan >= 10:
+                # request list of available AP
+            scan_list = self.wlan.scan()
+                # extract names and rssi, eliminate duplicates and hidden values
+            ap_strength = {}
+            for ap in scan_list:
+                ap_name = ap[0].decode()
+                ap_rssi = ap[3]
+                if ap_name in ap_strength:
+                    if ap_rssi > ap_strength[ap_name]:
+                        ap_strength[ap_name] = ap_rssi
+                elif ap_name != '':
                     ap_strength[ap_name] = ap_rssi
-            elif ap_name != '':
-                ap_strength[ap_name] = ap_rssi
-            # sort available APs by signal strength
-        self.ap_list = []
-        for ap in sorted(ap_strength, key=ap_strength.get, reverse=True):
-            self.ap_list.append([ap, ap_strength[ap]])
+                # sort available APs by signal strength
+            self.ap_list = []
+            for ap in sorted(ap_strength, key=ap_strength.get, reverse=True):
+                self.ap_list.append([ap, ap_strength[ap]])
+            self.time_of_last_scan = time.time()
 
     def __init__(self, hostname):
         self.hostname = hostname
@@ -40,11 +46,14 @@ class lan():
         self.wlan = network.WLAN(network.STA_IF)
         self.wlan.active(True)
         self.ap = ''
+        self.time_of_last_scan = None
         self.wifi_scan()
+        self.user_ap_list = []
         self.mac_address = self.wlan.config('mac').hex(':')
 
     def wifi_list(self):
         self.wifi_scan()
+        self.user_ap_list = copy(self.ap_list)
         response = []
         for index in range(len(self.ap_list)):
             name, rssi = self.ap_list[index]

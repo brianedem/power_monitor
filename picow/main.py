@@ -168,8 +168,10 @@ def process_command(command):
                 index, password = tokens[2:4]
                 if not index.isdigit() :
                     result.append(f'Error - the index parameter {index} must be numeric')
-                elif 0 <= int(index) < len(wifi.ap_list):
-                    network = wifi.ap_list[int(index)]
+                elif not any(wifi.user_ap_list):
+                    result.append(f'Error - use the "wifi scan" command to obtain list of AP\'s first')
+                elif 0 <= int(index) < len(wifi.user_ap_list):
+                    network = wifi.user_ap_list[int(index)]
                     ssid = network[0]
                     configuration.wifi[ssid] = password
                     result.append(f'Use "save config" to add ssid/password to configuration file')
@@ -309,6 +311,8 @@ try:
                 log.info(f'Server is listening on {ip_address}:80')
                 led.on()
             else :
+                if any(configuration.wifi):
+                    wifi.wifi_connect(configuration.wifi)
                 toggleLED()
 
             # check and service console and/or web server

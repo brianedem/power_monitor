@@ -114,7 +114,7 @@ while True:
         if day_start_energy:
             timestamp = time.strftime('%a %b %d', day_start_time)
             energy_used = energy - day_start_energy
-            print(f'{timestamp}: {energy_used:.3f} Wh used yesterday')
+            print(f'{timestamp}      {energy_used:.3f} Wh used yesterday')
         day_start_time = local_time
         day_start_energy = energy
 
@@ -136,6 +136,7 @@ while True:
     # at this point we have confirmed that an event has occured
     # collect notifications and send in one message
     notification = []
+    timestamp = time.strftime('%a %b %e %H:%M', local_time)
 
     # if something is turning off report event and results
     if prev_state is State.COMPRESSOR or prev_state is State.RESISTIVE:
@@ -143,7 +144,7 @@ while True:
         # placeholder for database update
         prev_state_duriation = int((current_time_sec - state_start_time)/60)
         energy_used = energy - state_start_energy
-        print(f'{time.asctime(local_time)}: ' +
+        print(f'{timestamp} ' +
             f'{prev_element} ran for {prev_state_duriation} minutes and used {energy_used:.3f} kWh')
             
     # if something is turning on report event
@@ -154,12 +155,11 @@ while True:
         notification.append('Resistive heater is on')
         prev_element = 'Resistive heater'
 
-    timestamp = time.strftime('%a %b %d %H:%M', local_time)
     for n in notification:
         log.info(n)
         print(f'{timestamp}: {n}')
         try:
-            requests.post(f'http://ntfy.sh/{ntfy_key}', data=f'{timestamp}: {n}')
+            requests.post(f'http://ntfy.sh/{ntfy_key}', data=f'{timestamp} {n}')
         except:
             log.warning('post to ntfy failed')
 

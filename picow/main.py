@@ -94,7 +94,8 @@ def process_command(command):
                 if temperature is None :
                     result.append(f'Error - {thermometer.status}')
                 else :
-                    result.append(f'Temperature = {temperature:.1f} C ({1.8*temperature+32:.1f} F)')
+                    temperature_f = 1.8*temperature+32
+                    result.append(f'Temperature = {temperature:.1f} C ({temperature_f:.1f} F)')
         elif tokens[1].startswith('ver') :      #version
             result.append(f'Version {_version.version}')
             result.append(f'Date {_version.releaseDate}')
@@ -163,6 +164,8 @@ def process_command(command):
                     result.append(f' {i} {network} {password}')
             elif tokens[1].startswith('stat'):  #status
                 result = wifi.status()
+            else:
+                result.append(f'Error - unknown wifi action {token[1]}')
         elif num_tokens==4:
             if tokens[1].startswith('con') :    #connect
                 index, password = tokens[2:4]
@@ -247,7 +250,8 @@ def processRequest(cl, request):
         elif temperature is None :
             html_body += f'Temperature: {thermometer.status}\n'
         else :
-            html_body += f'Temperature = {temperature:2.1f} C\n'
+            temperature_f = 1.8*temperature+32
+            html_body += f'Temperature = {temperature:.1f} C ({temperature_f:.1f} F)\n'
 
         response = 'HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n'
         response += html_head.format(wifi.hostname) + html_body + html_tail

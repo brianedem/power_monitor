@@ -18,6 +18,7 @@ import time
 from enum import Enum
 import random
 import string
+import http
 
 log = logging.getLogger(__name__)
 logging.basicConfig(filename='wheater.log', encoding='utf-8', level=logging.WARN)
@@ -62,6 +63,8 @@ def pollDevice(dev) :
         log.exception(f'Request to {dev} {e.reason}')
     except TimeoutError :
         log.exception(f'Request to {dev} timed out')
+    except http.client.RemoteDisconnected :
+        log.exception(f'{dev} disconnected before returning response')
 
     return values
 

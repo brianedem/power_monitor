@@ -55,7 +55,7 @@ log = logging.getLogger(__name__)
 if args.sql_test:
     logging.basicConfig(level=logging.DEBUG)
 else:
-    logging.basicConfig(filename='hvac.log', encoding='utf-8', level=logging.WARN)
+    logging.basicConfig(filename=f'{parser.prog}.log', encoding='utf-8', level=logging.WARN)
 
 sql_database = 'elpowerdb'
 if MYSQL:

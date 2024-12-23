@@ -1,0 +1,3 @@
+[submodule "picow_peacefair"]
+	path = picow_peacefair
+	url = http://github.com/brianedem/picow_peacefair

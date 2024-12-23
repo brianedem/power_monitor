@@ -36,38 +36,39 @@ Relay Wiring
  18 - Y1 Compressor stage 1
 '''
 
-import sys
+from enum import Enum
 import logging
 import requests
+import socket
+import sys
 import time
-from enum import Enum
 
 log = logging.getLogger(__name__)
-logging.basicConfig(filename='defrost.log', encoding='utf-8', level=logging.DEBUG)
+logging.basicConfig(filename='defrost.log', encoding='utf-8', level=logging.INFO,
+    format='%(asctime)s:%(levelname)s:%(message)s')
+
+log.info("starting")
 
 devices = (
     'condenser',
     'evaporator',
     )
 
+addresses = {}
+for device in devices:
+    addresses[device] = socket.gethostbyname(device+'.lan')
+
 def pollDevice(dev) :
     try:
         r = requests.get(f'http://{dev}/data.json')
     except requests.exceptions.ConnectionError:
-        log.error(f'Unable to connect to {dev}')
+        log.info(f'Unable to connect to {dev}')
         return None
     try:
         return r.json()
     except requests.exceptions.JSONDecodeError:
-        log.exception(f'Unable to decode JSON data from {dev}')
+        log.error(f'Unable to decode JSON data from {dev}')
         return None
-
-def extract(data, values) :
-    result = {}
-    for value in values :
-        if value in data :
-            result[value] = data[value]
-    return result
 
 '''
 During defrost the compressor will cycle off when before the
@@ -89,6 +90,7 @@ class State(Enum):
     HS_END = 2
     COMP_END = 3
     COMP_WAIT = 4
+    HEATING = 5
 
 state = State.HS_WAIT
 
@@ -100,69 +102,159 @@ fail_count = {
     EVAP: 0,
     }
 
+MAX_FAIL = 100
+class hvac_events:
+    __slots__ = ()
+    COMP_OFF = 1
+    COMP_ON = 2
+    EVAP_OFF = 3
+    EVAP_FAN = 4
+    EVAP_HS = 5
+s = hvac_events()
+test_events = iter((
+    (10, s.COMP_ON),  # start cycle
+    ( 5, s.EVAP_FAN),
+    (10, s.COMP_OFF),
+    ( 5, s.EVAP_OFF), # end cycle
+    (10, s.COMP_ON),  # start cycle - with hs on after comp reverse
+    ( 5, s.EVAP_FAN),
+    (10, s.COMP_OFF), # defrost - comp off
+    ( 5, s.COMP_ON),  # defrost - comp reverse
+    ( 5, s.EVAP_HS),  # defrost hs on
+    (10, s.COMP_OFF), # defrost - comp off
+    ( 5, s.EVAP_FAN), # defrost hs off
+    ( 5, s.COMP_ON),  # defrost - comp on
+    (10, s.COMP_OFF), # defrost reheat complete
+    ( 5, s.EVAP_OFF),
+    (10, s.COMP_ON),  # start cycle - with hs on before comp reverse
+    ( 5, s.EVAP_FAN),
+    (10, s.COMP_OFF), # defrost - comp off
+    ( 5, s.EVAP_HS),  # defrost hs on
+    ( 5, s.COMP_ON),  # defrost - comp reverse
+    ( 5, s.EVAP_FAN), # defrost hs off
+    (10, s.COMP_OFF), # defrost - comp off
+    ( 5, s.COMP_ON),  # defrost - comp on
+    (10, s.COMP_OFF), # defrost reheat complete
+    ( 5, s.EVAP_OFF),
+    (0, 0),
+))
+
+test = False
+comp_on = False
+hs_on = False
+evap_off = True
+test_time = time.time()
+resp = {COND: 0, EVAP:9}
+
 while True:
-    resp = {}
-    for device in devices :
-        values = pollDevice(device)
-        try:
-            power = values['power']
-            resp[device] = power
-        except KeyError:
-            log.warning(f'Missing value for {device}')
-            resp[device] = None
-            fail_count[device] += 1
-        else:
-            fail_count[device] = 0
+    if test:
+        print(state)
+#       print(next(test_events))
+#       continue
+        delta, event = next(test_events)
+        if delta == 0:
+            print('End of test')
+            sys.exit(0)
+        match event:
+            case s.COMP_OFF:
+                comp_on = False
+            case s.COMP_ON:
+                comp_on = True
+            case s.EVAP_OFF:
+                hs_on = False
+                evap_off = True
+            case s.EVAP_FAN:
+                hs_on = False
+                evap_off = False
+            case s.EVAP_HS:
+                hs_on = True
+                evap_off = False
+            case _:
+                raise ValueError("Invalid test event entry")
+        test_time += delta
+        ts = time.strftime('%H:%M:%S', time.localtime(test_time))
+        print(f'{ts} {comp_on=}, {hs_on=}, {evap_off=}')
+        
+    else:
+        time.sleep(10)
+        resp = {}
+        for device in devices :
+            values = pollDevice(addresses[device])
+            if values is None:
+                fail_count[device] += 1
+                continue
+            elif 'power' in values:
+                resp[device] = values['power']
+                fail_count[device] = 0
+            else:
+                log.warning(f'Missing power value for {device}')
+                fail_count[device] += 1
 
 #   print(resp)
 
-    if len(resp) != 2:
-        if fail_count[COND] > 10:
-            log.error(f'condensor is not responding')
-            sys.exit(1)
-        elif fail_count[EVAP] > 10:
-            log.error(f'evaporator is not responding')
-            sys.exit(1)
-    else:
+        if len(resp) != 2:
+            if fail_count[COND] > MAX_FAIL:
+                log.error(f'condensor is not responding')
+                sys.exit(1)
+            elif fail_count[EVAP] > MAX_FAIL:
+                log.error(f'evaporator is not responding')
+                sys.exit(1)
+            continue
         comp_on = resp[COND] > 1000
         hs_on = resp[EVAP] > 2000
+        evap_off = resp[EVAP] < 50
         ts = time.strftime('%H:%M:%S')
 
-        if state == State.HS_WAIT:
-            if comp_on and hs_on:
-                state = State.DEFROST
-                print(f'{ds} defrost start')
+    if state != State.HS_WAIT and evap_off:
+        print(f'{ts} evaporator shut off during defrost')
+        state = State.HS_WAIT
 
-        elif state == State.DEFROST:      # hs and compressor are both on
-            if not hs_on:
-                state = State.HS_END
-                print(f'{ds} heat strips off; compressor power = {resp[COND]}')
-            if not comp_on:
-                state = State.COMP_END
-                print(f'{ds} compressor off; heat strip power = {resp[EVAP]}')
+    elif state == State.HS_WAIT:
+        if comp_on and hs_on:
+            state = State.DEFROST
+            print(f'{ts} defrost start')
 
-        elif state == State.HS_END:      # heat strips off, waiting for compressor to turn off
-            if not comp_on:
-                state = State.COMP_WAIT
-                print(f'{ds} compressor and heat strip off')
-            elif hs_on:         # unexpected transition
-                state = State.DEFROST
-                print(f'{ds} heat strips back on - unexpected transition')
+    elif state == State.DEFROST:      # hs and compressor are both on
+        if not hs_on:
+            state = State.HS_END
+            print(f'{ts} heat strips off; compressor power = {resp[COND]}')
+        if not comp_on:
+            state = State.COMP_END
+            print(f'{ts} compressor off; heat strip power = {resp[EVAP]}')
 
-        elif state == State.COMP_END:     # compressor off, waiting for heat strips to turn off
-            if not hs_on:
-                state = State.COMP_WAIT
-                print(f'{ds} compressor and heat strip off')
-            elif comp_on:
-                state = State.DEFROST
-                print(f'{ds} compressor back on - unexpected transition')
+    elif state == State.HS_END:      # heat strips off, waiting for compressor to turn off
+        if not comp_on:
+            state = State.COMP_WAIT
+            print(f'{ts} compressor and heat strip off')
+        elif hs_on:         # unexpected transition
+            state = State.DEFROST
+            print(f'{ts} heat strips back on - unexpected transition')
 
-        elif state == State.COMP_WAIT:      # heat strips and compressor off
-            if comp_on:
-                state = State.HS_WAIT
-                print(f'{ds} compressor back on')
-            elif hs_on:         # unexpected transition
-                state = State.COMP_END
-                print(f'{ds} heat strips back on - unexpected transition')
+    elif state == State.COMP_END:     # compressor off, waiting for heat strips to turn off
+        if not hs_on:
+            state = State.COMP_WAIT
+            print(f'{ts} compressor and heat strip off')
+        elif comp_on:
+            state = State.DEFROST
+            print(f'{ts} compressor back on - unexpected transition')
 
-    time.sleep(10)
+    elif state == State.COMP_WAIT:      # heat strips and compressor off
+        if comp_on:
+            state = State.HEATING
+            reheat_start = time.time()
+            print(f'{ts} compressor on - reheating indoor coil')
+        elif hs_on:         # unexpected transition
+            state = State.COMP_END
+            print(f'{ts} heat strips back on - unexpected transition')
+
+    elif state == State.HEATING:
+        reheat_time = time.time() - reheat_start
+        if not comp_on:
+            state = State.HS_WAIT
+            print(f'{ts} compressor off - indoor reheat ends')
+        elif hs_on:
+            state = State.DEFROST
+            print(f'{ts} heat strips back on - unexpected transition')
+        elif reheat_time > (5*60):
+            state = State.HS_WAIT
+            print(f'{ts} reheat 5 minute timeout - defrost ends')

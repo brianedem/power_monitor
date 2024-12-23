@@ -9,8 +9,7 @@ daily power consumption are logged
 """
 
 import logging
-from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
+import picow_peacefair.pp_read as pp
 import json
 import time
 from enum import Enum
@@ -67,31 +66,6 @@ if MYSQL:
         MYSQL = False
         log.exception(f'Unable to connect to {sql_database} database')
 
-def pollDevice(dev) :
-    """ Reads power information from picow + peacefair power meter
-    """
-    req = Request(f'http://{dev}/data.json')
-    values = {}
-    try:
-        with urlopen(req) as response :
-            content_type = response.getheader('Content-type')
-            if 'json' in content_type :
-                body = response.read()
-#               log.debug(body)
-                values = json.loads(body)
-            else :
-                print('{dev}: json content not found')
-                print(response.read())
-
-    except HTTPError as e:
-        log.exception(f'Request to {dev} {e.code}')
-    except URLError as e:
-        log.exception(f'Request to {dev} {e.reason}')
-    except TimeoutError :
-        log.exception(f'Request to {dev} timed out')
-
-    return values
-
 class State():
     STARTUP = 0
     OFF = 1
@@ -131,7 +105,7 @@ while True:
     errors = []
     power_change_detected = False
     for device in devices:
-        values = pollDevice(device.url)
+        values = pp.read_dev(device.url)
         try:
             power = values['power']
             energy = values['energy']

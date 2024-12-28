@@ -10,8 +10,7 @@ This script should be run daily via cron
 import os
 import logging
 import socket
-from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
+import picow_peacefair.pp_read as pp
 import json
 import time
 import platform
@@ -49,39 +48,9 @@ devices = (
     'waterheater',
     )
 
-def pollDevice(dev) :
-    req = Request(f'http://{dev}.lan/data.json')
-    values = {}
-    try:
-        with urlopen(req) as response :
-            content_type = response.getheader('Content-type')
-            if 'json' in content_type :
-                body = response.read()
-                log.debug(body)
-                values = json.loads(body)
-            else :
-                print('{dev}: json content not found')
-                print(response.read())
-
-    except HTTPError as e:
-        log.exception(f'Request to {dev} {e.code}')
-    except URLError as e:
-        log.exception(f'Request to {dev} {e.reason}')
-    except TimeoutError :
-        log.exception(f'Request to {dev} timed out')
-
-    return values
-
-def extract(data, values) :
-    result = {}
-    for value in values :
-        if value in data :
-            result[value] = data[value]
-    return result
-
 resp = {}
 for device in devices :
-    values = pollDevice(device)
+    values = pp.read_dev(device)
     try:
         energy = values['energy']
     except:

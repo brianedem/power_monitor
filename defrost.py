@@ -10,7 +10,22 @@ evaporator wet from condensation, which then allows mold to grow
 until the next call for heat. At the next heat cycle a smell is
 generated as the mold dries out.
 
-The Fix
+Observations
+While observing the results of an earlier version of this code
+the smell was detected after the second defrost cycle of continous
+operation of the heat pump, and in that case the system continued
+to run for at least 15 minutes after the second defrost cycle.
+
+Additional Thougths
+The system may already be taking actions to prevent the interruption
+of a defrost cycle. The defrost circuitry in the compressor already
+enables the W control during the time the compressor is operating
+in the cool mode, so it may also be enabling the Y1 control to
+ensure that the cycle is not interrupted.
+I would need to add monitoring to determine if Y1 continues to be
+enabled after the zone controller releases it.
+
+Possible Fix
 A time delay relay will be added that will override the
 thermostat during defrost to ensure that the system completes the
 defrost cycle and the evaporator has had sufficient time to dry
@@ -38,7 +53,7 @@ Relay Wiring
 
 from enum import Enum
 import logging
-import requests
+import picow_peacefair.pp_read as pp
 import socket
 import sys
 import time
@@ -57,18 +72,6 @@ devices = (
 addresses = {}
 for device in devices:
     addresses[device] = socket.gethostbyname(device+'.lan')
-
-def pollDevice(dev) :
-    try:
-        r = requests.get(f'http://{dev}/data.json')
-    except requests.exceptions.ConnectionError:
-        log.info(f'Unable to connect to {dev}')
-        return None
-    try:
-        return r.json()
-    except requests.exceptions.JSONDecodeError:
-        log.error(f'Unable to decode JSON data from {dev}')
-        return None
 
 '''
 During defrost the compressor will cycle off when before the
@@ -179,7 +182,7 @@ while True:
         time.sleep(10)
         resp = {}
         for device in devices :
-            values = pollDevice(addresses[device])
+            values = pp.read_dev(addresses[device])
             if values is None:
                 fail_count[device] += 1
                 continue

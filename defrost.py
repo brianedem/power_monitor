@@ -11,6 +11,12 @@ until the next call for heat. At the next heat cycle a smell is
 generated as the mold dries out.
 
 Observations
+On 2024-12-31 during the 9AM defrost cycle I noticed the smell
+at the start of the reheat after the defrost, so the problem may
+not totally be related to the previous defrost cycles, although
+there were three previous defrost cycles where the first two
+ended reheat after 2m 29s and 3m 2s.
+
 While observing the results of an earlier version of this code
 the smell was detected after the second defrost cycle of continous
 operation of the heat pump, and in that case the system continued
